@@ -21,6 +21,8 @@ type SessionRepository interface {
 	FindActiveByHash(ctx context.Context, hash string) (*models.RefreshToken, error)
 	// Revoke invalidates an active session refresh token by marking it revoked.
 	Revoke(ctx context.Context, id uuid.UUID) error
+	// RevokeAllForUser invalidates all active session refresh tokens for a user.
+	RevokeAllForUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // sessionRepository implements the SessionRepository interface using pgxpool.
@@ -73,5 +75,12 @@ func (r *sessionRepository) FindActiveByHash(ctx context.Context, hash string) (
 func (r *sessionRepository) Revoke(ctx context.Context, id uuid.UUID) error {
 	query := `UPDATE refresh_tokens SET revoked = $1 WHERE id = $2`
 	_, err := r.db.Exec(ctx, query, true, id)
+	return err
+}
+
+// RevokeAllForUser invalidates all active session refresh tokens for a user.
+func (r *sessionRepository) RevokeAllForUser(ctx context.Context, userID uuid.UUID) error {
+	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE user_id = $1`
+	_, err := r.db.Exec(ctx, query, userID)
 	return err
 }

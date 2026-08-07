@@ -37,6 +37,9 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	otpRepo := repository.NewUserEmailOTPRepository(db)
+	emailOTPRepo := repository.NewEmailOTPRepository(db)
+	mobileOTPRepo := repository.NewMobileOTPRepository(db)
+	forgotPasswordRepo := repository.NewForgotPasswordRepository(db)
 
 	// Dependency Injection: Utility helpers.
 	jwtManager := helpers.NewJWTManager(cfg.JWT)
@@ -49,6 +52,9 @@ func main() {
 		userRepo,
 		sessionRepo,
 		otpRepo,
+		emailOTPRepo,
+		mobileOTPRepo,
+		forgotPasswordRepo,
 		jwtManager,
 		emailService,
 		smsService,

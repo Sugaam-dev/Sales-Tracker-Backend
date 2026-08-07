@@ -209,8 +209,35 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS email_otps (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			otp_hash VARCHAR NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS mobile_otps (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			otp_hash VARCHAR NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			token_hash VARCHAR UNIQUE NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_mfa_otps_user_id ON mfa_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_otps_user_id ON email_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_mobile_otps_user_id ON mobile_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
 	}
 
 	for _, q := range queries {
