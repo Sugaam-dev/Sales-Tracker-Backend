@@ -21,6 +21,14 @@ type UserRepository interface {
 	FindByMobile(ctx context.Context, mobile string) (*models.User, error)
 	// FindByID searches for a user by their UUID primary key.
 	FindByID(ctx context.Context, id uuid.UUID) (*models.User, error)
+	// UpdatePasswordAndFirstLogin updates password hash and clears is_first_login.
+	UpdatePasswordAndFirstLogin(ctx context.Context, id uuid.UUID, newPasswordHash string) error
+	// UpdateEmailVerified sets email_verified to TRUE.
+	UpdateEmailVerified(ctx context.Context, id uuid.UUID) error
+	// UpdateMobileVerified sets mobile_verified to TRUE.
+	UpdateMobileVerified(ctx context.Context, id uuid.UUID) error
+	// UpdatePassword updates password hash.
+	UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error
 }
 
 // userRepository implements the UserRepository interface using pgxpool.
@@ -81,4 +89,32 @@ func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Us
 	query := "SELECT " + selectUserFields + " FROM users WHERE id = $1"
 	row := r.db.QueryRow(ctx, query, id)
 	return scanUser(row)
+}
+
+// UpdatePasswordAndFirstLogin updates password hash and clears is_first_login.
+func (r *userRepository) UpdatePasswordAndFirstLogin(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = $1, is_first_login = FALSE, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, newPasswordHash, id)
+	return err
+}
+
+// UpdateEmailVerified sets email_verified to TRUE.
+func (r *userRepository) UpdateEmailVerified(ctx context.Context, id uuid.UUID) error {
+	query := `UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id)
+	return err
+}
+
+// UpdateMobileVerified sets mobile_verified to TRUE.
+func (r *userRepository) UpdateMobileVerified(ctx context.Context, id uuid.UUID) error {
+	query := `UPDATE users SET mobile_verified = TRUE, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id)
+	return err
+}
+
+// UpdatePassword updates password hash.
+func (r *userRepository) UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, newPasswordHash, id)
+	return err
 }

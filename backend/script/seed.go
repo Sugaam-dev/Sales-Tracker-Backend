@@ -14,9 +14,10 @@ import (
 )
 
 type SeedUser struct {
-	Email    string
-	Password string
-	Role     string
+	Email        string
+	Password     string
+	Role         string
+	IsFirstLogin bool
 }
 
 func main() {
@@ -36,22 +37,30 @@ func main() {
 	}
 	defer db.Close()
 
-	// Default CRM users
 	users := []SeedUser{
 		{
-			Email:    "admin@pmrgsolution.com",
-			Password: "Welcome@123",
-			Role:     "admin",
+			Email:        "admin@pmrgsolution.com",
+			Password:     "Welcome@123",
+			Role:         "admin",
+			IsFirstLogin: false,
 		},
 		{
-			Email:    "manager@pmrgsolution.com",
-			Password: "Welcome@123",
-			Role:     "manager",
+			Email:        "manager@pmrgsolution.com",
+			Password:     "Welcome@123",
+			Role:         "manager",
+			IsFirstLogin: false,
 		},
 		{
-			Email:    "agent@pmrgsolution.com",
-			Password: "Welcome@123",
-			Role:     "agent",
+			Email:        "agent@pmrgsolution.com",
+			Password:     "Welcome@123",
+			Role:         "agent",
+			IsFirstLogin: false,
+		},
+		{
+			Email:        "newuser@pmrgsolution.com",
+			Password:     "Welcome@123",
+			Role:         "agent",
+			IsFirstLogin: true,
 		},
 	}
 
@@ -86,9 +95,9 @@ func createUser(db *pgxpool.Pool, data SeedUser) {
 		log.Fatalf("failed to hash password : %v", err)
 	}
 
-	queryInsert := `INSERT INTO users (email, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	if _, err := db.Exec(ctx, queryInsert, data.Email, passwordHash, data.Role, false, true, true, false); err != nil {
+	queryInsert := `INSERT INTO users (email, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, created_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`
+	if _, err := db.Exec(ctx, queryInsert, data.Email, passwordHash, data.Role, data.IsFirstLogin, true, true, false); err != nil {
 		log.Fatalf("failed to create user : %v", err)
 	}
 

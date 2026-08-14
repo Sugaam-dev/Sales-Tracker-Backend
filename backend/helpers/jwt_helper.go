@@ -76,9 +76,19 @@ func (m *JWTManager) GenerateTempToken(userID uuid.UUID) (string, error) {
 	return m.sign(Claims{UserID: userID, Type: TokenTypeFirstLogin}, m.tempTTL)
 }
 
+// ValidateTempToken parses and verifies a temp token.
+func (m *JWTManager) ValidateTempToken(tokenString string) (*Claims, error) {
+	return m.parse(tokenString, TokenTypeFirstLogin)
+}
+
 // GenerateMFAPendingToken signs a multi-factor authentication validation token.
 func (m *JWTManager) GenerateMFAPendingToken(userID uuid.UUID) (string, error) {
 	return m.sign(Claims{UserID: userID, Type: TokenTypeMFAPending}, m.mfaPendingTTL)
+}
+
+// ValidateMFAPendingToken parses and verifies an mfa pending token.
+func (m *JWTManager) ValidateMFAPendingToken(tokenString string) (*Claims, error) {
+	return m.parse(tokenString, TokenTypeMFAPending)
 }
 
 // sign generates and signs a new JWT with specified claims and duration.
