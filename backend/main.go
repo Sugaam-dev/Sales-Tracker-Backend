@@ -66,6 +66,7 @@ func main() {
 	router := gin.New()
 	router.SetTrustedProxies(nil)
 	router.Use(gin.Recovery())
+	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
 	routes.RegisterRoutes(router, authController)

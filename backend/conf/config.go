@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
@@ -122,58 +122,34 @@ func getEnv(key, fallback string) string {
 
 // ConnectDB establishes a connection pool to the target PostgreSQL database using pgxpool.
 func ConnectDB(cfg DBConfig, log *slog.Logger) (*pgxpool.Pool, error) {
-	if err := ensureDatabaseExists(cfg, log); err != nil {
-		return nil, fmt.Errorf("conf: ensure database exists: %w", err)
-	}
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+    pool, err := pgxpool.New(ctx, cfg.DSN(cfg.Name))
+    if err != nil {
+        return nil, fmt.Errorf("conf: connect: %w", err)
+    }
 
-	pool, err := pgxpool.New(ctx, cfg.DSN(cfg.Name))
-	if err != nil {
-		return nil, fmt.Errorf("conf: connect: %w", err)
-	}
+    if err := pool.Ping(ctx); err != nil {
+        pool.Close()
+        return nil, fmt.Errorf("conf: ping database: %w", err)
+    }
 
-	if _, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgcrypto"); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("conf: enable pgcrypto: %w", err)
-	}
+    if _, err := pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgcrypto"); err != nil {
+        pool.Close()
+        return nil, fmt.Errorf("conf: enable pgcrypto: %w", err)
+    }
 
-	if err := executeMigrations(ctx, pool); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("conf: migrations: %w", err)
-	}
+    if err := executeMigrations(ctx, pool); err != nil {
+        pool.Close()
+        return nil, fmt.Errorf("conf: migrations: %w", err)
+    }
 
-	log.Info("database ready", "database", cfg.Name)
-	return pool, nil
+    log.Info("database ready", "database", cfg.Name)
+
+    return pool, nil
 }
 
-func ensureDatabaseExists(cfg DBConfig, log *slog.Logger) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	conn, err := pgx.Connect(ctx, cfg.DSN(""))
-	if err != nil {
-		return fmt.Errorf("connect to maintenance database: %w", err)
-	}
-	defer conn.Close(ctx)
-
-	var exists bool
-	query := "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)"
-	if err := conn.QueryRow(ctx, query, cfg.Name).Scan(&exists); err != nil {
-		return fmt.Errorf("check database existence: %w", err)
-	}
-	if exists {
-		return nil
-	}
-
-	log.Info("database does not exist, creating", "database", cfg.Name)
-	createDBQuery := fmt.Sprintf(`CREATE DATABASE "%s"`, cfg.Name)
-	if _, err := conn.Exec(ctx, createDBQuery); err != nil {
-		return fmt.Errorf("create database: %w", err)
-	}
-	return nil
-}
 
 func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	queries := []string{
