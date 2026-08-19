@@ -106,8 +106,8 @@ func (r *userRepository) FindBySSOID(ctx context.Context, provider, subjectID st
 
 // Create persists a new User.
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
-	query := `INSERT INTO users (email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	query := `INSERT INTO users (email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 			  RETURNING id, created_at, updated_at`
 	return r.db.QueryRow(ctx, query, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID).
 		Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)

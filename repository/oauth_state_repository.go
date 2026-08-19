@@ -26,8 +26,8 @@ func NewOAuthStateRepository(db *pgxpool.Pool) OAuthStateRepository {
 }
 
 func (r *oauthStateRepository) SaveOAuthState(ctx context.Context, state *models.OAuthState) error {
-	query := `INSERT INTO oauth_states (state, provider, expires_at)
-			  VALUES ($1, $2, $3)
+	query := `INSERT INTO oauth_states (state, provider, expires_at, created_at)
+			  VALUES ($1, $2, $3, NOW())
 			  RETURNING id, created_at`
 	return r.db.QueryRow(ctx, query, state.State, state.Provider, state.ExpiresAt).
 		Scan(&state.ID, &state.CreatedAt)
