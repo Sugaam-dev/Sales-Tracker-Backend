@@ -32,8 +32,8 @@ func NewUserEmailOTPRepository(db *pgxpool.Pool) UserEmailOTPRepository {
 
 // Create persists a new MFA OTP record.
 func (r *userEmailOTPRepository) Create(ctx context.Context, otp *models.MFAOtp) error {
-	query := `INSERT INTO mfa_otps (user_id, otp_hash, used, expires_at)
-			  VALUES ($1, $2, $3, $4)
+	query := `INSERT INTO mfa_otps (user_id, otp_hash, used, expires_at, created_at)
+			  VALUES ($1, $2, $3, $4, NOW())
 			  RETURNING id, created_at`
 	return r.db.QueryRow(ctx, query, otp.UserID, otp.OTPHash, otp.Used, otp.ExpiresAt).
 		Scan(&otp.ID, &otp.CreatedAt)

@@ -39,8 +39,8 @@ func NewSessionRepository(db *pgxpool.Pool) SessionRepository {
 func (r *sessionRepository) Create(ctx context.Context, token *models.RefreshToken) error {
 	query := `
 		INSERT INTO refresh_tokens
-		(user_id, token_hash, revoked, expires_at)
-		VALUES ($1, $2, $3, $4)
+		(user_id, token_hash, revoked, expires_at, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
 		RETURNING id, created_at
 	`
 

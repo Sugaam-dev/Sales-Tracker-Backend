@@ -33,8 +33,8 @@ func (r *forgotPasswordRepository) DeleteUnused(ctx context.Context, userID uuid
 }
 
 func (r *forgotPasswordRepository) Create(ctx context.Context, token *models.PasswordResetToken) error {
-	query := `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
-			  VALUES ($1, $2, $3)
+	query := `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+			  VALUES ($1, $2, $3, NOW())
 			  RETURNING id, created_at, used`
 	return r.db.QueryRow(ctx, query, token.UserID, token.TokenHash, token.ExpiresAt).
 		Scan(&token.ID, &token.CreatedAt, &token.Used)

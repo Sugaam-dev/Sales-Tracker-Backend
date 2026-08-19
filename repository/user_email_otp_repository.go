@@ -33,8 +33,8 @@ func (r *emailOTPRepository) DeleteUnused(ctx context.Context, userID uuid.UUID)
 }
 
 func (r *emailOTPRepository) Create(ctx context.Context, otp *models.UserEmailOTP) error {
-	query := `INSERT INTO email_otps (user_id, otp_hash, expires_at)
-			  VALUES ($1, $2, $3)
+	query := `INSERT INTO email_otps (user_id, otp_hash, expires_at, created_at)
+			  VALUES ($1, $2, $3, NOW())
 			  RETURNING id, created_at, used`
 	return r.db.QueryRow(ctx, query, otp.UserID, otp.OTPHash, otp.ExpiresAt).
 		Scan(&otp.ID, &otp.CreatedAt, &otp.Used)
