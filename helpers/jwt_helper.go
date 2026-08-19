@@ -15,22 +15,19 @@ import (
 	"crm-auth-service/conf"
 )
 
-// ---------------------------------------------------------------------
-// Claims
-// ---------------------------------------------------------------------
-
+// TokenType defines the purpose or category of the generated JSON Web Token.
 type TokenType string
 
 const (
-	TokenTypeAccess     TokenType = "access"
+	// TokenTypeAccess represents a standard session authorization token.
+	TokenTypeAccess TokenType = "access"
+	// TokenTypeFirstLogin represents a temporary token indicating onboarding is required.
 	TokenTypeFirstLogin TokenType = "first_login"
+	// TokenTypeMFAPending represents a temporary token indicating MFA verification is required.
 	TokenTypeMFAPending TokenType = "mfa_pending"
 )
 
-// Claims covers every JWT this service issues. Only Type is required on
-// every token; Role and Email are populated for access tokens only —
-// temp_token and mfa_pending_token carry nothing but user_id and type,
-// by design, so they can never be used as session credentials.
+// Claims represents the JWT payload metadata.
 type Claims struct {
 	UserID uuid.UUID `json:"user_id"`
 	Role   string    `json:"role,omitempty"`
@@ -39,17 +36,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// ---------------------------------------------------------------------
-// JWT Manager
-// ---------------------------------------------------------------------
-
 var (
+	// ErrInvalidToken is returned when the token is signature-invalid or expired.
 	ErrInvalidToken = errors.New("jwt: invalid token")
-	ErrWrongType    = errors.New("jwt: token type mismatch")
+	// ErrWrongType is returned when the token category mismatch occurs.
+	ErrWrongType = errors.New("jwt: token type mismatch")
 )
 
-// JWTManager holds the signing secret and TTLs so no other package
-// needs direct access to conf.JWTConfig or the raw secret.
+// JWTManager handles signing and validating JSON Web Tokens.
 type JWTManager struct {
 	secret        []byte
 	accessTTL     time.Duration
@@ -57,6 +51,7 @@ type JWTManager struct {
 	mfaPendingTTL time.Duration
 }
 
+// NewJWTManager constructs a new instance of JWTManager.
 func NewJWTManager(cfg conf.JWTConfig) *JWTManager {
 	return &JWTManager{
 		secret:        []byte(cfg.Secret),
@@ -66,31 +61,37 @@ func NewJWTManager(cfg conf.JWTConfig) *JWTManager {
 	}
 }
 
-// GenerateAccessToken signs the full session JWT — payload
-// { user_id, role, email }, 15 min expiry, per the documented contract.
+// GenerateAccessToken signs a session authorization token.
 func (m *JWTManager) GenerateAccessToken(userID uuid.UUID, role, email string) (string, error) {
 	return m.sign(Claims{UserID: userID, Role: role, Email: email, Type: TokenTypeAccess}, m.accessTTL)
 }
 
-// ValidateAccessToken parses and verifies an access token, rejecting
-// anything not specifically typed "access" — a stolen temp_token or
-// mfa_pending_token can never authenticate a real request.
+// ValidateAccessToken parses and verifies an access token.
 func (m *JWTManager) ValidateAccessToken(tokenString string) (*Claims, error) {
 	return m.parse(tokenString, TokenTypeAccess)
 }
 
-// GenerateTempToken signs the first-login onboarding token — payload
-// { user_id, type: "first_login" }, 15 min expiry.
+// GenerateTempToken signs an onboarding registration token.
 func (m *JWTManager) GenerateTempToken(userID uuid.UUID) (string, error) {
 	return m.sign(Claims{UserID: userID, Type: TokenTypeFirstLogin}, m.tempTTL)
 }
 
-// GenerateMFAPendingToken signs the OTP-step token — payload
-// { user_id, type: "mfa_pending" }, 5 min expiry.
+// ValidateTempToken parses and verifies a temp token.
+func (m *JWTManager) ValidateTempToken(tokenString string) (*Claims, error) {
+	return m.parse(tokenString, TokenTypeFirstLogin)
+}
+
+// GenerateMFAPendingToken signs a multi-factor authentication validation token.
 func (m *JWTManager) GenerateMFAPendingToken(userID uuid.UUID) (string, error) {
 	return m.sign(Claims{UserID: userID, Type: TokenTypeMFAPending}, m.mfaPendingTTL)
 }
 
+// ValidateMFAPendingToken parses and verifies an mfa pending token.
+func (m *JWTManager) ValidateMFAPendingToken(tokenString string) (*Claims, error) {
+	return m.parse(tokenString, TokenTypeMFAPending)
+}
+
+// sign generates and signs a new JWT with specified claims and duration.
 func (m *JWTManager) sign(claims Claims, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims.RegisteredClaims = jwt.RegisteredClaims{
@@ -101,6 +102,7 @@ func (m *JWTManager) sign(claims Claims, ttl time.Duration) (string, error) {
 	return token.SignedString(m.secret)
 }
 
+// parse decodes the JWT and validates the signature and expected token type.
 func (m *JWTManager) parse(tokenString string, want TokenType) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
@@ -118,14 +120,8 @@ func (m *JWTManager) parse(tokenString string, want TokenType) (*Claims, error) 
 	return claims, nil
 }
 
-// ---------------------------------------------------------------------
-// Refresh token (opaque, NOT a JWT — per the doc's crypto.randomBytes(64))
-// ---------------------------------------------------------------------
-
-// GenerateRefreshToken produces a 64-byte cryptographically random
-// token, hex-encoded. Unlike access/temp tokens, this is opaque: it
-// carries no claims, so a leaked token reveals nothing about the user.
-func GenerateRefreshToken() (raw string, err error) {
+// GenerateRefreshToken produces a cryptographically secure random token.
+func GenerateRefreshToken() (string, error) {
 	buf := make([]byte, 64)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("helpers: generate refresh token: %w", err)
@@ -133,16 +129,13 @@ func GenerateRefreshToken() (raw string, err error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// HashRefreshToken returns the SHA-256 hex digest stored in
-// refresh_tokens. The raw token is only ever returned to the client
-// once, at issue time.
+// HashRefreshToken generates a SHA-256 hex signature from the raw token.
 func HashRefreshToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
 
-// ValidateRefreshToken re-hashes the raw token and compares it against
-// the stored hash in constant time, guarding against timing attacks.
+// ValidateRefreshToken validates the raw token against the stored hex digest in constant time.
 func ValidateRefreshToken(raw, storedHash string) bool {
 	computed := HashRefreshToken(raw)
 	return subtle.ConstantTimeCompare([]byte(computed), []byte(storedHash)) == 1

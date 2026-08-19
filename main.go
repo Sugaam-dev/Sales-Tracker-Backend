@@ -1,13 +1,7 @@
 package main
 
 import (
-	"fmt"
-	"log/slog"
-	"net"
-	"net/http"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,127 +15,73 @@ import (
 )
 
 func main() {
+	// Load configuration settings from environment or .env file.
 	cfg, err := conf.LoadConfig()
 	if err != nil {
-		// Logger isn't built yet — config failure is always fatal, so a
-		// plain stderr write is correct here, not a slog call.
 		os.Stderr.WriteString("config error: " + err.Error() + "\n")
 		os.Exit(1)
 	}
 
-	log := newLogger(cfg.Server.Env)
+	// Initialize structured logging system.
+	log := helpers.NewLogger(cfg.Server.Env)
 
+	// Connect to database and perform migrations.
 	db, err := conf.ConnectDB(cfg.DB, log)
 	if err != nil {
 		log.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Error("failed to get underlying sql.DB", "error", err)
-		os.Exit(1)
-	}
-	defer sqlDB.Close()
+	defer db.Close()
 
-	// --- Dependency wiring ---------------------------------------------
-	// Repositories (data access)
+	// Dependency Injection: Repository data-access layer.
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	otpRepo := repository.NewUserEmailOTPRepository(db)
+	emailOTPRepo := repository.NewEmailOTPRepository(db)
+	mobileOTPRepo := repository.NewMobileOTPRepository(db)
+	forgotPasswordRepo := repository.NewForgotPasswordRepository(db)
 	oauthStateRepo := repository.NewOAuthStateRepository(db)
 
-	// Cross-cutting helpers
+	// Dependency Injection: Utility helpers.
 	jwtManager := helpers.NewJWTManager(cfg.JWT)
 	emailService := helpers.NewConsoleEmailService(log)
 	smsService := helpers.NewConsoleSMSService(log)
 	rateLimiter := middleware.NewRateLimiter(cfg.Rate.MaxAttempts, cfg.Rate.Window)
 
-	// Business logic
+	// Dependency Injection: Core business services layer.
 	authService := services.NewAuthService(
-		userRepo, sessionRepo, otpRepo, oauthStateRepo,
-		jwtManager, emailService, smsService,
-		rateLimiter, log,
+		userRepo,
+		sessionRepo,
+		otpRepo,
+		emailOTPRepo,
+		mobileOTPRepo,
+		forgotPasswordRepo,
+		oauthStateRepo,
+		jwtManager,
+		emailService,
+		smsService,
+		rateLimiter,
+		log,
 	)
 
-	// HTTP layer
+	// Dependency Injection: HTTP layer controller.
 	authController := controllers.NewAuthController(authService, log)
 
-	
+	// Configure routing engine.
 	if cfg.Server.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-
 	router := gin.New()
-
-	// Set trusted proxies BEFORE starting the server
 	router.SetTrustedProxies(nil)
-
 	router.Use(gin.Recovery())
+	router.Use(middleware.CORSMiddleware())
 
-
-	// Register application routes
+	// Bind application endpoint route mappings.
 	routes.RegisterRoutes(router, authController, jwtManager)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
-
-	// Attempt to bind to the configured port; if it's already in use, try the next few ports.
-	basePort, err := strconv.Atoi(cfg.Server.Port)
-	if err != nil {
-		// Non-numeric port (e.g., named socket) — try to listen directly and fail with clearer message.
-		addr := ":" + cfg.Server.Port
-		ln, lerr := net.Listen("tcp", addr)
-		if lerr != nil {
-			log.Error("failed to bind to configured address", "addr", addr, "error", lerr)
-			os.Exit(1)
-		}
-		if serr := http.Serve(ln, router); serr != nil {
-			log.Error("server stopped", "error", serr)
-			os.Exit(1)
-		}
-		return
-	}
-
-	var ln net.Listener
-	found := false
-	for i := 0; i <= 10; i++ {
-		p := basePort + i
-		addr := fmt.Sprintf(":%d", p)
-		ln, err = net.Listen("tcp", addr)
-		if err != nil {
-			// If address in use, try next port. For other errors, fail fast.
-			if strings.Contains(err.Error(), "Only one usage of each socket address") || strings.Contains(strings.ToLower(err.Error()), "address already in use") {
-				continue
-			}
-			log.Error("failed to bind", "addr", addr, "error", err)
-			os.Exit(1)
-		}
-		// success
-		log.Info("bound and serving", "addr", addr)
-		found = true
-		break
-	}
-	if !found {
-		log.Error("could not bind to any available port in range", "base_port", basePort)
+	if err := router.Run(":" + cfg.Server.Port); err != nil {
+		log.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
-	if serr := http.Serve(ln, router); serr != nil {
-		log.Error("server stopped", "error", serr)
-		os.Exit(1)
-	}
-}
-
-// newLogger builds the structured logger: JSON in production, text in
-// development.
-func newLogger(env string) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
-	if env == "development" {
-		opts.Level = slog.LevelDebug 
-	}
-	var handler slog.Handler
-	if env == "production" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	}
-	return slog.New(handler)
 }

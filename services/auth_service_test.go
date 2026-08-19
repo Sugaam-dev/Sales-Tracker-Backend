@@ -50,6 +50,18 @@ func (m *mockUserRepo) Create(ctx context.Context, user *models.User) error {
 func (m *mockUserRepo) Update(ctx context.Context, user *models.User) error {
 	return nil
 }
+func (m *mockUserRepo) UpdatePasswordAndFirstLogin(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	return nil
+}
+func (m *mockUserRepo) UpdateEmailVerified(ctx context.Context, id uuid.UUID) error {
+	return nil
+}
+func (m *mockUserRepo) UpdateMobileVerified(ctx context.Context, id uuid.UUID) error {
+	return nil
+}
+func (m *mockUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	return nil
+}
 
 // mockRoundTripper intercepts HTTP requests for tests
 type mockRoundTripper func(req *http.Request) (*http.Response, error)
@@ -104,13 +116,16 @@ func TestSSOCallback_ErrorHandling(t *testing.T) {
 
 	authService := NewAuthService(
 		&mockUserRepo{},
-		nil,
-		nil,
+		nil, // sessionRepo
+		nil, // otpRepo
+		nil, // emailOTPRepo
+		nil, // mobileOTPRepo
+		nil, // forgotPasswordRepo
 		stateRepo,
-		nil,
-		nil,
-		nil,
-		nil,
+		nil, // jwtManager
+		nil, // emailSvc
+		nil, // smsSvc
+		nil, // rateLimiter
 		logger,
 	)
 
@@ -169,13 +184,16 @@ func TestBuildSSORedirectURL(t *testing.T) {
 
 	authService := NewAuthService(
 		&mockUserRepo{},
-		nil,
-		nil,
+		nil, // sessionRepo
+		nil, // otpRepo
+		nil, // emailOTPRepo
+		nil, // mobileOTPRepo
+		nil, // forgotPasswordRepo
 		stateRepo,
-		nil,
-		nil,
-		nil,
-		nil,
+		nil, // jwtManager
+		nil, // emailSvc
+		nil, // smsSvc
+		nil, // rateLimiter
 		slog.Default(),
 	)
 

@@ -1,25 +1,33 @@
 package helpers
 
-import (
-	"log/slog"
-)
+import "log/slog"
 
-// EmailService represents the interface for sending emails
+// EmailService defines the operations for sending email notifications.
 type EmailService interface {
-	SendOTP(email, otp string) error
+	// SendOTP delivers a multi-factor authentication code to the specified email address.
+	SendOTP(toEmail, otp string) error
+	// SendPasswordReset delivers a password reset link to the specified email address.
+	SendPasswordReset(toEmail, resetLink string) error
 }
 
+// consoleEmailService logs OTP codes to the logger.
 type consoleEmailService struct {
 	log *slog.Logger
 }
 
-// NewConsoleEmailService creates a new console email service
+// NewConsoleEmailService constructs a new console-based EmailService.
 func NewConsoleEmailService(log *slog.Logger) EmailService {
 	return &consoleEmailService{log: log}
 }
 
-// SendOTP simulates sending an OTP by writing to the log
-func (s *consoleEmailService) SendOTP(email, otp string) error {
-	s.log.Info("simulated email send", "to", email, "subject", "Verify your email — CRM", "otp", otp)
+// SendOTP logs the multi-factor authentication OTP to the console.
+func (s *consoleEmailService) SendOTP(toEmail, otp string) error {
+	s.log.Info("MFA OTP (console dev mode)", "to", toEmail, "otp", otp)
+	return nil
+}
+
+// SendPasswordReset logs the password reset link to the console.
+func (s *consoleEmailService) SendPasswordReset(toEmail, resetLink string) error {
+	s.log.Info("Password Reset Link (console dev mode)", "to", toEmail, "link", resetLink)
 	return nil
 }

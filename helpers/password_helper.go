@@ -1,18 +1,19 @@
 package helpers
 
-import (
-	"strings"
+import "golang.org/x/crypto/bcrypt"
 
-	"golang.org/x/crypto/bcrypt"
-)
+const bcryptCost = 12
 
-// IsEmailIdentifier checks if the given identifier contains "@"
-func IsEmailIdentifier(identifier string) bool {
-	return strings.Contains(identifier, "@")
+// HashPassword bcrypt-hashes a plaintext password.
+func HashPassword(plain string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(plain), bcryptCost)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
 }
 
-// ComparePassword compares a hashed bcrypt password with its plain text version
-func ComparePassword(plain, hashed string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain))
-	return err == nil
+// ComparePassword reports whether plain matches the stored bcrypt hash.
+func ComparePassword(plain, hash string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
 }

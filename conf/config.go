@@ -1,27 +1,18 @@
-// Package conf owns two things: reading environment configuration, and
-// the database connection lifecycle (create-if-missing, connect,
-// migrate). Nothing outside this package should call os.Getenv or open
-// a *gorm.DB directly.
+// Package conf owns environment configuration and database pool lifecycle.
 package conf
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
-
-	"crm-auth-service/models"
 )
 
-// ---------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------
-
+// Config holds the full application settings.
 type Config struct {
 	Server ServerConfig
 	DB     DBConfig
@@ -29,11 +20,13 @@ type Config struct {
 	Rate   RateLimitConfig
 }
 
+// ServerConfig defines server environment and execution port.
 type ServerConfig struct {
 	Port string
-	Env  string // "development" | "production"
+	Env  string
 }
 
+// DBConfig defines PostgreSQL database connectivity settings.
 type DBConfig struct {
 	Host     string
 	Port     string
@@ -43,8 +36,7 @@ type DBConfig struct {
 	SSLMode  string
 }
 
-// DSN returns a Postgres connection string. Pass "" to connect to the
-// "postgres" maintenance database (used only to create the target DB).
+// DSN returns a Postgres connection string.
 func (d DBConfig) DSN(dbName string) string {
 	name := dbName
 	if name == "" {
@@ -56,6 +48,7 @@ func (d DBConfig) DSN(dbName string) string {
 	)
 }
 
+// JWTConfig holds secret signing key and TTL parameters.
 type JWTConfig struct {
 	Secret             string
 	AccessTokenTTL     time.Duration
@@ -64,13 +57,13 @@ type JWTConfig struct {
 	MFAPendingTokenTTL time.Duration
 }
 
+// RateLimitConfig holds attempt count limits and evaluation window size.
 type RateLimitConfig struct {
 	MaxAttempts int
 	Window      time.Duration
 }
 
-// LoadConfig reads .env (missing file is fine — production sets real env
-// vars) and returns a validated Config.
+// LoadConfig reads configuration settings from the environment or a .env file.
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
@@ -126,38 +119,122 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// ---------------------------------------------------------------------
-// Database connection & migration
-// ---------------------------------------------------------------------
+// ConnectDB establishes a connection pool to the target PostgreSQL database using pgxpool.
+func ConnectDB(cfg DBConfig, log *slog.Logger) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-// ConnectDB creates the target database if it doesn't exist, opens a
-// GORM connection, enables pgcrypto (needed for gen_random_uuid()
-// defaults), and runs AutoMigrate for Module A's tables only — users,
-// refresh_tokens, mfa_otps. Future modules add their own migration step
-// for tables they own; this function must never be extended beyond
-// Module A's scope.
-func ConnectDB(cfg DBConfig, log *slog.Logger) (*gorm.DB, error) {
-	
-	db, err := gorm.Open(postgres.Open(cfg.DSN(cfg.Name)), &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Warn),
-	})
+	log.Info(
+		"database configuration",
+		"host", cfg.Host,
+		"port", cfg.Port,
+		"user", cfg.User,
+		"database", cfg.Name,
+		"sslmode", cfg.SSLMode,
+	)
+
+	pool, err := pgxpool.New(ctx, cfg.DSN(cfg.Name))
 	if err != nil {
 		return nil, fmt.Errorf("conf: connect: %w", err)
 	}
 
-	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).Error; err != nil {
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("conf: ping database: %w", err)
+	}
+
+	if _, err := pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pgcrypto"); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("conf: enable pgcrypto: %w", err)
 	}
 
-	if err := db.AutoMigrate(
-		&models.User{},
-		&models.RefreshToken{},
-		&models.MFAOtp{},
-	); err != nil {
-		return nil, fmt.Errorf("conf: automigrate: %w", err)
+	if err := executeMigrations(ctx, pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("conf: migrations: %w", err)
 	}
 
 	log.Info("database ready", "database", cfg.Name)
-	return db, nil
+
+	return pool, nil
 }
 
+func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			email VARCHAR UNIQUE NOT NULL,
+			mobile VARCHAR UNIQUE,
+			password_hash VARCHAR NOT NULL,
+			role VARCHAR NOT NULL,
+			is_first_login BOOLEAN NOT NULL DEFAULT TRUE,
+			email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+			mobile_verified BOOLEAN NOT NULL DEFAULT FALSE,
+			mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+			mfa_method VARCHAR,
+			sso_provider VARCHAR,
+			sso_subject_id VARCHAR,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS refresh_tokens (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			token_hash VARCHAR UNIQUE NOT NULL,
+			revoked BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS mfa_otps (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			otp_hash VARCHAR NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS email_otps (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			otp_hash VARCHAR NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS mobile_otps (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			otp_hash VARCHAR NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			token_hash VARCHAR UNIQUE NOT NULL,
+			used BOOLEAN NOT NULL DEFAULT FALSE,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS oauth_states (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			state VARCHAR UNIQUE NOT NULL,
+			provider VARCHAR NOT NULL,
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_mfa_otps_user_id ON mfa_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_email_otps_user_id ON email_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_mobile_otps_user_id ON mobile_otps(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state)`,
+	}
+
+	for _, q := range queries {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
+}

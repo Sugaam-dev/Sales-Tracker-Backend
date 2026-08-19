@@ -16,9 +16,6 @@ func RegisterRoutes(router *gin.Engine, authController *controllers.AuthControll
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Direct routes for Microsoft login/callback to match Azure Registration
-	router.GET("/auth/microsoft/login", authController.SSORedirect)
-
 	apiV1 := router.Group("/api/v1")
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
 }

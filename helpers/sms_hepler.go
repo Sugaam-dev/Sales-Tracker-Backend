@@ -1,25 +1,25 @@
 package helpers
 
-import (
-	"log/slog"
-)
+import "log/slog"
 
-// SMSService represents the interface for sending SMS messages
+// SMSService defines the operations for sending SMS notifications.
 type SMSService interface {
-	SendOTP(mobile, otp string) error
+	// SendOTP delivers a multi-factor authentication code to the specified mobile phone number.
+	SendOTP(toMobile, otp string) error
 }
 
+// consoleSMSService logs OTP codes to the logger.
 type consoleSMSService struct {
 	log *slog.Logger
 }
 
-// NewConsoleSMSService creates a new console SMS service
+// NewConsoleSMSService constructs a new console-based SMSService.
 func NewConsoleSMSService(log *slog.Logger) SMSService {
 	return &consoleSMSService{log: log}
 }
 
-// SendOTP simulates sending an OTP via SMS by writing to the log
-func (s *consoleSMSService) SendOTP(mobile, otp string) error {
-	s.log.Info("simulated SMS send", "to", mobile, "otp", otp)
+// SendOTP logs the multi-factor authentication OTP to the console.
+func (s *consoleSMSService) SendOTP(toMobile, otp string) error {
+	s.log.Info("MFA OTP (console dev mode)", "to", toMobile, "otp", otp)
 	return nil
 }

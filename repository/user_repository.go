@@ -1,3 +1,4 @@
+// Package repository defines data-access layers.
 package repository
 
 import (
@@ -5,80 +6,148 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
-	"crm-auth-service/helpers"
+	"crm-auth-service/helpers" 
 	"crm-auth-service/models"
 )
 
-// UserRepository is a pure data-access interface — no HTTP, no business
-// rules. Deciding whether an identifier is an email or a mobile number
-// is the service layer's job; this interface just offers lookups.
+// UserRepository defines the database operations for User entities.
 type UserRepository interface {
+	// FindByEmail searches for a user by email address.
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	// FindByMobile searches for a user by mobile number.
 	FindByMobile(ctx context.Context, mobile string) (*models.User, error)
+	// FindByID searches for a user by their UUID primary key.
 	FindByID(ctx context.Context, id uuid.UUID) (*models.User, error)
+	// FindBySSOID searches for a user by their SSO provider and subject ID.
 	FindBySSOID(ctx context.Context, provider, subjectID string) (*models.User, error)
+	// Create persists a new User.
 	Create(ctx context.Context, user *models.User) error
+	// Update updates an existing User.
 	Update(ctx context.Context, user *models.User) error
+	// UpdatePasswordAndFirstLogin updates password hash and clears is_first_login.
+	UpdatePasswordAndFirstLogin(ctx context.Context, id uuid.UUID, newPasswordHash string) error
+	// UpdateEmailVerified sets email_verified to TRUE.
+	UpdateEmailVerified(ctx context.Context, id uuid.UUID) error
+	// UpdateMobileVerified sets mobile_verified to TRUE.
+	UpdateMobileVerified(ctx context.Context, id uuid.UUID) error
+	// UpdatePassword updates password hash.
+	UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error
 }
 
+// userRepository implements the UserRepository interface using pgxpool.
 type userRepository struct {
-	db *gorm.DB
+	db *pgxpool.Pool
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
+// NewUserRepository constructs a new instance of UserRepository.
+func NewUserRepository(db *pgxpool.Pool) UserRepository {
 	return &userRepository{db: db}
 }
 
+const selectUserFields = "id, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at"
+
+func scanUser(row pgx.Row) (*models.User, error) {
+	var user models.User
+	err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.Mobile,
+		&user.PasswordHash,
+		&user.Role,
+		&user.IsFirstLogin,
+		&user.EmailVerified,
+		&user.MobileVerified,
+		&user.MFAEnabled,
+		&user.MFAMethod,
+		&user.SSOProvider,
+		&user.SSOSubjectID,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, helpers.ErrNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+// FindByEmail searches for a user by email address.
 func (r *userRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, helpers.ErrNotFound
-		}
-		return nil, err
-	}
-	return &user, nil
+	query := "SELECT " + selectUserFields + " FROM users WHERE email = $1"
+	row := r.db.QueryRow(ctx, query, email)
+	return scanUser(row)
 }
 
+// FindByMobile searches for a user by mobile number.
 func (r *userRepository) FindByMobile(ctx context.Context, mobile string) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("mobile = ?", mobile).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, helpers.ErrNotFound
-		}
-		return nil, err
-	}
-	return &user, nil
+	query := "SELECT " + selectUserFields + " FROM users WHERE mobile = $1"
+	row := r.db.QueryRow(ctx, query, mobile)
+	return scanUser(row)
 }
 
+// FindByID searches for a user by their UUID primary key.
 func (r *userRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).First(&user, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, helpers.ErrNotFound
-		}
-		return nil, err
-	}
-	return &user, nil
+	query := "SELECT " + selectUserFields + " FROM users WHERE id = $1"
+	row := r.db.QueryRow(ctx, query, id)
+	return scanUser(row)
 }
 
+// FindBySSOID searches for a user by their SSO provider and subject ID.
 func (r *userRepository) FindBySSOID(ctx context.Context, provider, subjectID string) (*models.User, error) {
-	var user models.User
-	if err := r.db.WithContext(ctx).Where("sso_provider = ? AND sso_subject_id = ?", provider, subjectID).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, helpers.ErrNotFound
-		}
-		return nil, err
-	}
-	return &user, nil
+	query := "SELECT " + selectUserFields + " FROM users WHERE sso_provider = $1 AND sso_subject_id = $2"
+	row := r.db.QueryRow(ctx, query, provider, subjectID)
+	return scanUser(row)
 }
 
+// Create persists a new User.
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
-	return r.db.WithContext(ctx).Create(user).Error
+	query := `INSERT INTO users (email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			  RETURNING id, created_at, updated_at`
+	return r.db.QueryRow(ctx, query, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID).
+		Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 
+// Update updates an existing User.
 func (r *userRepository) Update(ctx context.Context, user *models.User) error {
-	return r.db.WithContext(ctx).Save(user).Error
+	query := `UPDATE users 
+			  SET email = $1, mobile = $2, password_hash = $3, role = $4, is_first_login = $5, 
+			      email_verified = $6, mobile_verified = $7, mfa_enabled = $8, mfa_method = $9, 
+			      sso_provider = $10, sso_subject_id = $11, updated_at = NOW() 
+			  WHERE id = $12`
+	_, err := r.db.Exec(ctx, query, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID, user.ID)
+	return err
+}
+
+// UpdatePasswordAndFirstLogin updates password hash and clears is_first_login.
+func (r *userRepository) UpdatePasswordAndFirstLogin(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = $1, is_first_login = FALSE, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, newPasswordHash, id)
+	return err
+}
+
+// UpdateEmailVerified sets email_verified to TRUE.
+func (r *userRepository) UpdateEmailVerified(ctx context.Context, id uuid.UUID) error {
+	query := `UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id)
+	return err
+}
+
+// UpdateMobileVerified sets mobile_verified to TRUE.
+func (r *userRepository) UpdateMobileVerified(ctx context.Context, id uuid.UUID) error {
+	query := `UPDATE users SET mobile_verified = TRUE, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id)
+	return err
+}
+
+// UpdatePassword updates password hash.
+func (r *userRepository) UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
+	query := `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, newPasswordHash, id)
+	return err
 }
