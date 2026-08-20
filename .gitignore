@@ -1,0 +1,49 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test Binary
+*.test
+
+# Output
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+
+# Environment Variables
+.env
+
+# Logs
+*.log
+
+# Build Folder
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go Workspace
+go.work
+go.work.sum
+
+# Temporary
+tmp/
+temp/
+
+# Database
+*.db
+
+# Misc
+*.swp
+*.bak

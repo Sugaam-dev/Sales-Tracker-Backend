@@ -1,0 +1,168 @@
+########################################################
+### Health Check
+########################################################
+
+GET http://localhost:8080/health
+
+###
+
+########################################################
+### SSO Login (Test this in browser first)
+########################################################
+
+# Open this in your browser to start the Microsoft SSO login flow:
+# http://localhost:8080/api/v1/auth/sso/redirect
+
+###
+
+########################################################
+### Login
+########################################################
+
+POST http://localhost:8080/api/v1/auth/login
+Content-Type: application/json
+
+{
+    "identifier": "newuser@pmrgsolution.com",
+    "password": "Welcome@123"
+}
+
+###
+
+########################################################
+### Onboarding: Set Password (First-Time Login Only)
+########################################################
+
+POST http://localhost:8080/api/v1/auth/onboarding/set-password
+Content-Type: application/json
+
+{
+    "temp_token": "YOUR_TEMP_TOKEN_FROM_LOGIN",
+    "new_password": "NewSecurePassword@123"
+}
+
+###
+
+########################################################
+### Onboarding: Send / Verify Email OTP
+########################################################
+
+# 1. Send OTP (omit the "otp" field)
+POST http://localhost:8080/api/v1/auth/onboarding/verify-email
+Content-Type: application/json
+
+{
+    "temp_token": "YOUR_TEMP_TOKEN_FROM_LOGIN"
+}
+
+###
+
+# 2. Verify OTP (include the "otp" field)
+POST http://localhost:8080/api/v1/auth/onboarding/verify-email
+Content-Type: application/json
+
+{
+    "temp_token": "YOUR_TEMP_TOKEN_FROM_LOGIN",
+    "otp": "123456"
+}
+
+###
+
+########################################################
+### Onboarding: Send / Verify Mobile OTP
+########################################################
+
+# 1. Send OTP (omit the "otp" field)
+POST http://localhost:8080/api/v1/auth/onboarding/verify-mobile
+Content-Type: application/json
+
+{
+    "temp_token": "YOUR_TEMP_TOKEN_FROM_LOGIN"
+}
+
+###
+
+# 2. Verify OTP (include the "otp" field)
+POST http://localhost:8080/api/v1/auth/onboarding/verify-mobile
+Content-Type: application/json
+
+{
+    "temp_token": "YOUR_TEMP_TOKEN_FROM_LOGIN",
+    "otp": "123456"
+}
+
+###
+
+########################################################
+### Forgot & Reset Password
+########################################################
+
+# 1. Request Reset Link
+POST http://localhost:8080/api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+    "email": "newuser@pmrgsolution.com"
+}
+
+###
+
+# 2. Reset Password using the token received in email console log
+POST http://localhost:8080/api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+    "token": "YOUR_PASSWORD_RESET_TOKEN_FROM_LOGS",
+    "new_password": "AnotherSecurePassword@123"
+}
+
+###
+
+########################################################
+### Refresh Token Rotation
+########################################################
+
+POST http://localhost:8080/api/v1/auth/refresh
+Content-Type: application/json
+
+{
+    "refresh_token": "YOUR_REFRESH_TOKEN_HERE"
+}
+
+###
+
+########################################################
+### Enable MFA (Requires Access Token)
+########################################################
+
+POST http://localhost:8080/api/v1/auth/mfa/enable
+Content-Type: application/json
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+{
+    "method": "email"
+}
+
+###
+
+########################################################
+### Verify MFA (During Login if MFA is Enabled)
+########################################################
+
+POST http://localhost:8080/api/v1/auth/mfa/verify
+Content-Type: application/json
+
+{
+    "mfa_pending_token": "YOUR_MFA_PENDING_TOKEN_FROM_LOGIN",
+    "otp": "123456"
+}
+
+###
+
+########################################################
+### Disable MFA (Requires Access Token)
+########################################################
+
+POST http://localhost:8080/api/v1/auth/mfa/disable
+Content-Type: application/json
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
