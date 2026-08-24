@@ -12,12 +12,30 @@ import (
 // owns this table's migration — other modules (onboarding, SSO, MFA
 // management) read and write the remaining columns without needing a
 // second migration.
+const (
+	RoleAdmin          = "admin"
+	RoleSalesManager   = "sales_manager"
+	RoleSalesExecutive = "sales_executive"
+	RoleLeader         = "leader"
+)
+
+// IsValidRole returns true if the input role matches one of the four valid roles.
+func IsValidRole(role string) bool {
+	switch role {
+	case RoleAdmin, RoleSalesManager, RoleSalesExecutive, RoleLeader:
+		return true
+	}
+	return false
+}
+
+
 type User struct {
 	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name           string    `gorm:"type:varchar;not null"`
 	Email          string    `gorm:"type:varchar;uniqueIndex;not null"`
 	Mobile         *string   `gorm:"type:varchar;uniqueIndex"`
 	PasswordHash   string    `gorm:"type:varchar;not null"`
-	Role           string    `gorm:"type:varchar;not null"` // admin | manager | agent
+	Role           string    `gorm:"type:varchar;not null"` // admin | sales_manager | sales_executive | leader
 	IsFirstLogin   bool      `gorm:"not null;default:true"`
 	EmailVerified  bool      `gorm:"not null;default:false"`
 	MobileVerified bool      `gorm:"not null;default:false"`
@@ -44,6 +62,7 @@ type LoginRequest struct {
 // includes PasswordHash or any other sensitive field.
 type UserSummary struct {
 	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
 	Email          string    `json:"email"`
 	Mobile         *string   `json:"mobile,omitempty"`
 	Role           string    `json:"role"`
