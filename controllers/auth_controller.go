@@ -251,9 +251,6 @@ func (ac *AuthController) SSOCallback(c *gin.Context) {
 	}
 
 	frontendURL := os.Getenv("FRONTEND_SSO_REDIRECT_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000/sso-success"
-	}
 
 	targetURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s", frontendURL, result.AccessToken, result.RefreshToken)
 	c.Redirect(http.StatusFound, targetURL)
