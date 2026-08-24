@@ -61,19 +61,3 @@ func ErrInternal() *AppError {
 		Message: "Something went wrong. Please try again.",
 	}
 }
-
-// ErrConflict constructs a 409 AppError for duplicate resource registration.
-func ErrConflict(message string) *AppError {
-	return &AppError{
-		Status:  http.StatusConflict,
-		Message: message,
-	}
-}
-
-// ErrForbidden constructs a 403 AppError for access authorization failures.
-func ErrForbidden(message string) *AppError {
-	return &AppError{
-		Status:  http.StatusForbidden,
-		Message: message,
-	}
-}

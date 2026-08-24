@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"crm-auth-service/helpers"
+	"crm-auth-service/helpers" 
 	"crm-auth-service/models"
 )
 
@@ -47,13 +47,12 @@ func NewUserRepository(db *pgxpool.Pool) UserRepository {
 	return &userRepository{db: db}
 }
 
-const selectUserFields = "id, name, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at"
+const selectUserFields = "id, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at"
 
 func scanUser(row pgx.Row) (*models.User, error) {
 	var user models.User
 	err := row.Scan(
 		&user.ID,
-		&user.Name,
 		&user.Email,
 		&user.Mobile,
 		&user.PasswordHash,
@@ -107,21 +106,21 @@ func (r *userRepository) FindBySSOID(ctx context.Context, provider, subjectID st
 
 // Create persists a new User.
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
-	query := `INSERT INTO users (name, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+	query := `INSERT INTO users (email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 			  RETURNING id, created_at, updated_at`
-	return r.db.QueryRow(ctx, query, user.Name, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID).
+	return r.db.QueryRow(ctx, query, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID).
 		Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 
 // Update updates an existing User.
 func (r *userRepository) Update(ctx context.Context, user *models.User) error {
 	query := `UPDATE users 
-			  SET name = $1, email = $2, mobile = $3, password_hash = $4, role = $5, is_first_login = $6, 
-			      email_verified = $7, mobile_verified = $8, mfa_enabled = $9, mfa_method = $10, 
-			      sso_provider = $11, sso_subject_id = $12, updated_at = NOW() 
-			  WHERE id = $13`
-	_, err := r.db.Exec(ctx, query, user.Name, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID, user.ID)
+			  SET email = $1, mobile = $2, password_hash = $3, role = $4, is_first_login = $5, 
+			      email_verified = $6, mobile_verified = $7, mfa_enabled = $8, mfa_method = $9, 
+			      sso_provider = $10, sso_subject_id = $11, updated_at = NOW() 
+			  WHERE id = $12`
+	_, err := r.db.Exec(ctx, query, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID, user.ID)
 	return err
 }
 

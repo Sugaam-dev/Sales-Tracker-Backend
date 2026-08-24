@@ -44,7 +44,7 @@ func (r *emailOTPRepository) FindValid(ctx context.Context, userID uuid.UUID, ot
 	query := `SELECT id, user_id, otp_hash, used, expires_at, created_at
 			  FROM email_otps
 			  WHERE user_id = $1 AND otp_hash = $2 AND used = FALSE AND expires_at > NOW()`
-
+	
 	var otp models.UserEmailOTP
 	err := r.db.QueryRow(ctx, query, userID, otpHash).
 		Scan(&otp.ID, &otp.UserID, &otp.OTPHash, &otp.Used, &otp.ExpiresAt, &otp.CreatedAt)
@@ -97,7 +97,7 @@ func (r *mobileOTPRepository) FindValid(ctx context.Context, userID uuid.UUID, o
 	query := `SELECT id, user_id, otp_hash, used, expires_at, created_at
 			  FROM mobile_otps
 			  WHERE user_id = $1 AND otp_hash = $2 AND used = FALSE AND expires_at > NOW()`
-
+	
 	var otp models.MobileOTP
 	err := r.db.QueryRow(ctx, query, userID, otpHash).
 		Scan(&otp.ID, &otp.UserID, &otp.OTPHash, &otp.Used, &otp.ExpiresAt, &otp.CreatedAt)

@@ -27,7 +27,6 @@ func RegisterAuthRoutes(rg *gin.RouterGroup, authController *controllers.AuthCon
 	auth := rg.Group("/auth")
 	auth.POST("/login", authController.Login)
 	auth.POST("/refresh", authController.Refresh)
-	auth.POST("/logout", middleware.AuthMiddleware(jwtManager), authController.Logout)
 
 	// Module B: Onboarding & Password Reset
 	onboarding := auth.Group("/onboarding")

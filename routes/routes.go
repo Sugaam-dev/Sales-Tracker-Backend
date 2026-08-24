@@ -7,7 +7,6 @@ import (
 
 	"crm-auth-service/controllers"
 	"crm-auth-service/helpers"
-	"crm-auth-service/middleware"
 	v1 "crm-auth-service/routes/api/v1"
 )
 
@@ -19,5 +18,4 @@ func RegisterRoutes(router *gin.Engine, authController *controllers.AuthControll
 
 	apiV1 := router.Group("/api/v1")
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
-	apiV1.POST("/users", middleware.AuthMiddleware(jwtManager), authController.CreateUser)
 }

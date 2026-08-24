@@ -259,7 +259,6 @@ func (s *AuthService) issueSession(ctx context.Context, user *models.User) (*mod
 		RefreshToken: rawRefreshToken,
 		User: models.UserSummary{
 			ID:             user.ID,
-			Name:           user.Name,
 			Email:          user.Email,
 			Mobile:         user.Mobile,
 			Role:           user.Role,
@@ -517,7 +516,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, mfaPendingToken, otp string
 	}
 
 	otpHash := helpers.HashOTP(otp)
-
+	
 	// Ensure to use FindValid from the repo handling mfa_otps.
 	otpRecord, err := s.otpRepo.FindValid(ctx, claims.UserID, otpHash)
 	if err != nil {
@@ -687,7 +686,7 @@ func (s *AuthService) SSOCallback(ctx context.Context, provider, code, state str
 				if errors.Is(err, helpers.ErrNotFound) {
 					user = &models.User{
 						Email:         email,
-						Role:          models.RoleSalesExecutive,
+						Role:          "agent",
 						IsFirstLogin:  false,
 						EmailVerified: true,
 						SSOProvider:   &provider,
@@ -743,78 +742,4 @@ func (s *AuthService) DisableMFA(ctx context.Context, userID uuid.UUID) error {
 	user.MFAEnabled = false
 	user.MFAMethod = nil
 	return s.userRepo.Update(ctx, user)
-}
-
-func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, password, role string) (*models.UserSummary, error) {
-	if !models.IsValidRole(role) {
-		return nil, helpers.ErrBadRequest("Invalid role value")
-	}
-
-	// Check if email already exists
-	existingUser, err := s.userRepo.FindByEmail(ctx, email)
-	if err == nil && existingUser != nil {
-		return nil, helpers.ErrConflict("Email address is already registered")
-	}
-
-	// Check if mobile already exists
-	if mobile != "" {
-		existingMobile, err := s.userRepo.FindByMobile(ctx, mobile)
-		if err == nil && existingMobile != nil {
-			return nil, helpers.ErrConflict("Mobile number is already registered")
-		}
-	}
-
-	// Hash password
-	passwordHash, err := helpers.HashPassword(password)
-	if err != nil {
-		return nil, fmt.Errorf("services: hash password: %w", err)
-	}
-
-	var mobilePtr *string
-	if mobile != "" {
-		mobilePtr = &mobile
-	}
-
-	user := &models.User{
-		Name:         name,
-		Email:        email,
-		Mobile:       mobilePtr,
-		PasswordHash: passwordHash,
-		Role:         role,
-		IsFirstLogin: true,
-	}
-
-	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("services: create user: %w", err)
-	}
-
-	return &models.UserSummary{
-		ID:             user.ID,
-		Name:           user.Name,
-		Email:          user.Email,
-		Mobile:         user.Mobile,
-		Role:           user.Role,
-		EmailVerified:  user.EmailVerified,
-		MobileVerified: user.MobileVerified,
-	}, nil
-}
-
-func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string, currentUserID uuid.UUID) error {
-	tokenHash := helpers.HashRefreshToken(rawRefreshToken)
-	tokenRecord, err := s.sessionRepo.FindActiveByHash(ctx, tokenHash)
-	if err != nil {
-		if errors.Is(err, helpers.ErrNotFound) {
-			return helpers.ErrTokenInvalid("Invalid or expired refresh token")
-		}
-		return fmt.Errorf("services: find refresh token: %w", err)
-	}
-
-	if tokenRecord.UserID != currentUserID {
-		return helpers.ErrForbidden("You do not have permission to revoke this session")
-	}
-
-	if err := s.sessionRepo.Revoke(ctx, tokenRecord.ID); err != nil {
-		return fmt.Errorf("services: revoke session: %w", err)
-	}
-	return nil
 }

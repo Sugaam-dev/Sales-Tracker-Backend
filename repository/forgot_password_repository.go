@@ -44,7 +44,7 @@ func (r *forgotPasswordRepository) FindValid(ctx context.Context, tokenHash stri
 	query := `SELECT id, user_id, token_hash, used, expires_at, created_at
 			  FROM password_reset_tokens
 			  WHERE token_hash = $1 AND used = FALSE AND expires_at > NOW()`
-
+	
 	var token models.PasswordResetToken
 	err := r.db.QueryRow(ctx, query, tokenHash).
 		Scan(&token.ID, &token.UserID, &token.TokenHash, &token.Used, &token.ExpiresAt, &token.CreatedAt)
