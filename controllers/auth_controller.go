@@ -307,3 +307,60 @@ func (ac *AuthController) DisableMFA(c *gin.Context) {
 
 	helpers.SuccessResponse(c, http.StatusOK, gin.H{"message": "MFA disabled successfully"})
 }
+
+func (ac *AuthController) Logout(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	userID, ok := userIDVal.(uuid.UUID)
+	if !ok {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	
+	var req struct {
+		RefreshToken string `json:"refresh_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "refresh_token is required")
+		return
+	}
+
+	err := ac.authService.Logout(c.Request.Context(), req.RefreshToken, userID)
+	if err != nil {
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+func (ac *AuthController) CreateUser(c *gin.Context) {
+	roleVal, exists := c.Get("role")
+	if !exists || roleVal != models.RoleAdmin {
+		helpers.ErrorResponse(c, http.StatusForbidden, "Only admin can create users")
+		return
+	}
+
+	var req struct {
+		Name     string `json:"name" binding:"required"`
+		Email    string `json:"email" binding:"required,email"`
+		Mobile   string `json:"mobile" binding:"required"`
+		Password string `json:"password" binding:"required"`
+		Role     string `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+				helpers.ErrorResponse(c, http.StatusBadRequest, "Missing or invalid payload fields")
+		return
+	}
+
+	summary, err := ac.authService.CreateUser(c.Request.Context(), req.Name, req.Email, req.Mobile, req.Password, req.Role)
+	if err != nil {
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, summary)
+}
