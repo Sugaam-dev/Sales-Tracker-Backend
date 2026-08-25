@@ -308,7 +308,6 @@ func (ac *AuthController) DisableMFA(c *gin.Context) {
 	helpers.SuccessResponse(c, http.StatusOK, gin.H{"message": "MFA disabled successfully"})
 }
 
-	
 func (ac *AuthController) Logout(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {

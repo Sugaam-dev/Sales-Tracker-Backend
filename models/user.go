@@ -28,7 +28,6 @@ func IsValidRole(role string) bool {
 	return false
 }
 
-
 type User struct {
 	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name           string    `gorm:"type:varchar;not null"`

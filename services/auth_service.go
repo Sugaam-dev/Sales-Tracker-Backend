@@ -259,7 +259,6 @@ func (s *AuthService) issueSession(ctx context.Context, user *models.User) (*mod
 		RefreshToken: rawRefreshToken,
 		User: models.UserSummary{
 			ID:             user.ID,
-			Name:           user.Name,
 			Email:          user.Email,
 			Mobile:         user.Mobile,
 			Role:           user.Role,
@@ -687,7 +686,7 @@ func (s *AuthService) SSOCallback(ctx context.Context, provider, code, state str
 				if errors.Is(err, helpers.ErrNotFound) {
 					user = &models.User{
 						Email:         email,
-						Role:          models.RoleSalesExecutive,
+						Role:          "agent",
 						IsFirstLogin:  false,
 						EmailVerified: true,
 						SSOProvider:   &provider,
@@ -744,7 +743,6 @@ func (s *AuthService) DisableMFA(ctx context.Context, userID uuid.UUID) error {
 	user.MFAMethod = nil
 	return s.userRepo.Update(ctx, user)
 }
-
 
 func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, password, role string) (*models.UserSummary, error) {
 	if !models.IsValidRole(role) {

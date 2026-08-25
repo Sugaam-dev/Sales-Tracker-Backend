@@ -47,13 +47,12 @@ func NewUserRepository(db *pgxpool.Pool) UserRepository {
 	return &userRepository{db: db}
 }
 
-const selectUserFields = "id, name, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at"
+const selectUserFields = "id, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at"
 
 func scanUser(row pgx.Row) (*models.User, error) {
 	var user models.User
 	err := row.Scan(
 		&user.ID,
-		&user.Name,
 		&user.Email,
 		&user.Mobile,
 		&user.PasswordHash,
@@ -105,10 +104,9 @@ func (r *userRepository) FindBySSOID(ctx context.Context, provider, subjectID st
 	return scanUser(row)
 }
 
-// Create persists a new User.
 func (r *userRepository) Create(ctx context.Context, user *models.User) error {
 	query := `INSERT INTO users (name, email, mobile, password_hash, role, is_first_login, email_verified, mobile_verified, mfa_enabled, mfa_method, sso_provider, sso_subject_id, created_at, updated_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12 NOW(), NOW())
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 			  RETURNING id, created_at, updated_at`
 	return r.db.QueryRow(ctx, query, user.Name, user.Email, user.Mobile, user.PasswordHash, user.Role, user.IsFirstLogin, user.EmailVerified, user.MobileVerified, user.MFAEnabled, user.MFAMethod, user.SSOProvider, user.SSOSubjectID).
 		Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)

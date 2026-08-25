@@ -162,7 +162,6 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			name VARCHAR NOT NULL DEFAULT 'User',
 			email VARCHAR UNIQUE NOT NULL,
 			mobile VARCHAR UNIQUE,
 			password_hash VARCHAR NOT NULL,
@@ -177,7 +176,6 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR NOT NULL DEFAULT 'User'`,
 		`CREATE TABLE IF NOT EXISTS refresh_tokens (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			user_id UUID NOT NULL,
