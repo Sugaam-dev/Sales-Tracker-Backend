@@ -229,6 +229,77 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX IF NOT EXISTS idx_mobile_otps_user_id ON mobile_otps(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state)`,
+		
+		// Alter users to support Lead Module fields
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`,
+
+		// Lead Module Master Stages
+		`CREATE TABLE IF NOT EXISTS lead_stages (
+			id INT PRIMARY KEY,
+			name VARCHAR NOT NULL,
+			sort_order INT NOT NULL,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE
+		)`,
+
+		// Lead ID Sequence
+		`CREATE SEQUENCE IF NOT EXISTS lead_id_seq START WITH 1`,
+
+		// Leads Table
+		`CREATE TABLE IF NOT EXISTS leads (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			lead_id VARCHAR UNIQUE NOT NULL,
+			company VARCHAR NOT NULL,
+			project_name VARCHAR,
+			contact VARCHAR,
+			email VARCHAR UNIQUE,
+			phone VARCHAR,
+			office_phone VARCHAR,
+			office_phone_country VARCHAR,
+			owner VARCHAR,
+			industry VARCHAR,
+			size VARCHAR,
+			region VARCHAR,
+			source VARCHAR,
+			stage VARCHAR,
+			status VARCHAR,
+			sentiment VARCHAR,
+			priority VARCHAR,
+			value NUMERIC(15, 2),
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP WITH TIME ZONE
+		)`,
+
+		// Leads Constraints / Indexes
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_lower ON leads (LOWER(company))`,
+		`CREATE INDEX IF NOT EXISTS idx_leads_deleted_at ON leads (deleted_at)`,
+
+		// Activities Table
+		`CREATE TABLE IF NOT EXISTS activities (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			lead_id VARCHAR REFERENCES leads(lead_id) ON DELETE CASCADE,
+			type VARCHAR,
+			"desc" TEXT,
+			outcome TEXT,
+			due_date TIMESTAMP WITH TIME ZONE,
+			completed BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		// Seed Lead Stages
+		`INSERT INTO lead_stages (id, name, sort_order, is_active) VALUES
+			(1, 'Prospecting', 1, true),
+			(2, 'Qualification', 2, true),
+			(3, 'Needs Analysis', 3, true),
+			(4, 'Proposal', 4, true),
+			(5, 'Negotiation', 5, true),
+			(6, 'Closed Won', 6, true),
+			(7, 'Closed Lost', 7, true)
+			ON CONFLICT (id) DO UPDATE SET
+				name = EXCLUDED.name,
+				sort_order = EXCLUDED.sort_order,
+				is_active = EXCLUDED.is_active`,
 	}
 
 	for _, q := range queries {

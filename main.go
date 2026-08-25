@@ -67,6 +67,11 @@ func main() {
 	// Dependency Injection: HTTP layer controller.
 	authController := controllers.NewAuthController(authService, log)
 
+	// Lead Module dependencies
+	leadRepo := repository.NewLeadRepository(db)
+	leadService := services.NewLeadService(leadRepo, userRepo)
+	leadController := controllers.NewLeadController(leadService, log)
+
 	// Configure routing engine.
 	if cfg.Server.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -77,7 +82,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, jwtManager)
+	routes.RegisterRoutes(router, authController, leadController, jwtManager)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
