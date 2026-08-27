@@ -24,4 +24,5 @@ func RegisterRoutes(router *gin.Engine, authController *controllers.AuthControll
 	apiV1.GET("/master/stages", middleware.AuthMiddleware(jwtManager), leadController.GetMasterStages)
 	apiV1.GET("/leads", middleware.AuthMiddleware(jwtManager), leadController.ListLeads)
 	apiV1.GET("/leads/:id", middleware.AuthMiddleware(jwtManager), leadController.GetLead)
+	apiV1.PATCH("/activities/:id/complete", middleware.AuthMiddleware(jwtManager), leadController.CompleteActivity)
 }

@@ -28,6 +28,14 @@ type LeadRepository interface {
 	FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
 	FindByID(ctx context.Context, leadID string) (*models.Lead, error)
 	UpdateLeadStatusAndStage(ctx context.Context, leadID string, status, stage string, lostReason *string) error
+
+	CreateActivity(activity *models.Activity) error
+	GetActivityByID(id uint) (*models.Activity, error)
+	UpdateActivityCompleted(id uint, completed bool) error
+	CheckEmailExists(email string) (bool, error)
+	CheckCompanyExists(company string) (bool, error)
+	CheckUserActive(name string) (bool, error)
+	CheckStageExistsCaseInsensitive(stage string) (bool, string, error)
 }
 
 type leadRepository struct {
@@ -62,6 +70,18 @@ func (r *leadRepository) CheckStageExists(stage string) (bool, error) {
 	var count int64
 	err := r.db.Model(&models.LeadStage{}).Where("name = ? AND is_active = ?", stage, true).Count(&count).Error
 	return count > 0, err
+}
+
+func (r *leadRepository) CheckStageExistsCaseInsensitive(stage string) (bool, string, error) {
+	var leadStage models.LeadStage
+	err := r.db.Where("LOWER(name) = LOWER(?) AND is_active = ?", stage, true).First(&leadStage).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	return true, leadStage.Name, nil
 }
 
 func (r *leadRepository) CreateLead(lead *models.Lead) error {
@@ -114,6 +134,41 @@ func (r *leadRepository) GetLeadActivities(leadID string) (*models.Lead, error) 
 		return nil, err
 	}
 	return &lead, nil
+}
+
+func (r *leadRepository) CreateActivity(activity *models.Activity) error {
+	return r.db.Create(activity).Error
+}
+
+func (r *leadRepository) GetActivityByID(id uint) (*models.Activity, error) {
+	var activity models.Activity
+	err := r.db.Where("id = ?", id).First(&activity).Error
+	if err != nil {
+		return nil, err
+	}
+	return &activity, nil
+}
+
+func (r *leadRepository) UpdateActivityCompleted(id uint, completed bool) error {
+	return r.db.Model(&models.Activity{}).Where("id = ?", id).Update("completed", completed).Error
+}
+
+func (r *leadRepository) CheckEmailExists(email string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.Lead{}).Where("email = ?", email).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *leadRepository) CheckCompanyExists(company string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.Lead{}).Where("LOWER(company) = LOWER(?)", company).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *leadRepository) CheckUserActive(name string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.User{}).Where("name = ? AND is_active = ?", name, true).Count(&count).Error
+	return count > 0, err
 }
 
 // ---------------------------------------------
