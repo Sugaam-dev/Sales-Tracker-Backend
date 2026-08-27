@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"strconv"
@@ -32,6 +33,10 @@ type LeadService interface {
 	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
 	ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
 	GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error)
+
+	CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
+	CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error)
+	BulkCreateLeads(userRole, userEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error)
 }
 
 type leadService struct {
@@ -137,15 +142,91 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 		return nil, ErrUnauthorized
 	}
 
+	newStatus := lead.Status
+	if req.Status != nil {
+		newStatus = req.Status
+	}
+	newStage := lead.Stage
+	if req.Stage != nil {
+		newStage = req.Stage
+	}
+
+	if req.Status != nil && req.Stage == nil {
+		var mappedStage string
+		switch *req.Status {
+		case "Open":
+			mappedStage = "Prospecting"
+		case "New":
+			mappedStage = "Qualification"
+		case "Won":
+			mappedStage = "Closed Won"
+		case "Lost":
+			mappedStage = "Closed Lost"
+		case "Contacted":
+			mappedStage = "Initial Discussion"
+		case "Analysis":
+			mappedStage = "Needs Analysis"
+		case "Interested":
+			mappedStage = "Proposal"
+		case "Negotiation":
+			mappedStage = "Negotiation"
+		}
+		if mappedStage != "" {
+			newStage = &mappedStage
+		}
+	}
+
+	if newStatus != nil && newStage != nil {
+		statusVal := *newStatus
+		stageVal := *newStage
+
+		if statusVal == "Won" && stageVal != "Closed Won" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Lost" && stageVal != "Closed Lost" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Open" && stageVal != "Prospecting" {
+			return nil, ErrValidation
+		}
+		if statusVal == "New" && stageVal != "Qualification" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Contacted" && stageVal != "Initial Discussion" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Analysis" && stageVal != "Needs Analysis" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Interested" && stageVal != "Proposal" {
+			return nil, ErrValidation
+		}
+		if statusVal == "Negotiation" && stageVal != "Negotiation" {
+			return nil, ErrValidation
+		}
+	}
+
+	if newStatus != nil && *newStatus == "Lost" {
+		lostReasonVal := ""
+		if req.LostReason != nil {
+			lostReasonVal = strings.TrimSpace(*req.LostReason)
+		} else if lead.LostReason != nil {
+			lostReasonVal = strings.TrimSpace(*lead.LostReason)
+		}
+		if lostReasonVal == "" {
+			return nil, ErrValidation
+		}
+	}
+
 	updates := make(map[string]interface{})
 	if req.Owner != nil {
 		updates["owner"] = *req.Owner
 	}
-	if req.Stage != nil {
-		updates["stage"] = *req.Stage
+	if newStage != nil {
+		updates["stage"] = *newStage
 	}
-	if req.Status != nil {
-		updates["status"] = *req.Status
+	if newStatus != nil {
+		updates["status"] = *newStatus
 	}
 	if req.Priority != nil {
 		updates["priority"] = *req.Priority
@@ -256,6 +337,13 @@ func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, ow
 		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "limit must be between 1 and 100"}
 	}
 
+	if stage != "" {
+		exists, err := s.leadRepo.CheckStageExists(stage)
+		if err != nil || !exists {
+			return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid stage filter"}
+		}
+	}
+
 	leads, total, err := s.leadRepo.FindLeads(ctx, page, limit, search, owner, priority, stage, sortBy, sortOrder)
 	if err != nil {
 		return nil, nil, err
@@ -317,4 +405,277 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
 	}
 	return resp
+}
+
+func (s *leadService) CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error) {
+	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	if err != nil && userRole != models.RoleAdmin {
+		return nil, ErrUnauthorized
+	}
+
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
+		return nil, ErrUnauthorized
+	}
+
+	var dueDate *time.Time
+	if req.DueDate != "" {
+		t, err := time.Parse("2006-01-02", req.DueDate)
+		if err != nil {
+			return nil, ErrValidation
+		}
+		dueDate = &t
+	}
+
+	activity := &models.Activity{
+		LeadID:    lead.LeadID,
+		Type:      req.Type,
+		Desc:      req.Desc,
+		Outcome:   req.Outcome,
+		DueDate:   dueDate,
+		Completed: false,
+	}
+
+	err = s.leadRepo.CreateActivity(activity)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	resp := models.ToActivityResponse(*activity)
+	return &resp, nil
+}
+
+func (s *leadService) CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error) {
+	activity, err := s.leadRepo.GetActivityByID(activityID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	lead, err := s.leadRepo.GetLeadByLeadID(activity.LeadID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	if err != nil && userRole != models.RoleAdmin {
+		return nil, ErrUnauthorized
+	}
+
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
+		return nil, ErrUnauthorized
+	}
+
+	if activity.Completed == completed {
+		resp := models.ToActivityResponse(*activity)
+		return &resp, nil
+	}
+
+	err = s.leadRepo.UpdateActivityCompleted(activityID, completed)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	activity.Completed = completed
+	resp := models.ToActivityResponse(*activity)
+	return &resp, nil
+}
+
+func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error) {
+	_, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	if err != nil && userRole != models.RoleAdmin {
+		return nil, ErrUnauthorized
+	}
+
+	total := len(req.Leads)
+	created := make([]models.BulkCreateCreatedResponse, 0)
+	failed := make([]models.BulkCreateFailedResponse, 0)
+
+	batchEmails := make(map[string]bool)
+	batchCompanies := make(map[string]bool)
+
+	for i, item := range req.Leads {
+		errorsMap := make(map[string]string)
+
+		companyTrimmed := strings.TrimSpace(item.Company)
+		if companyTrimmed == "" {
+			errorsMap["company"] = "Company is required"
+		}
+		contactTrimmed := strings.TrimSpace(item.Contact)
+		if contactTrimmed == "" {
+			errorsMap["contact"] = "Contact is required"
+		}
+		emailTrimmed := strings.ToLower(strings.TrimSpace(item.Email))
+		if emailTrimmed == "" {
+			errorsMap["email"] = "Email is required"
+		} else {
+			emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+			if !emailRegex.MatchString(emailTrimmed) {
+				errorsMap["email"] = "Invalid email format"
+			}
+		}
+
+		if len(item.Phone) != 10 {
+			errorsMap["phone"] = "Phone must contain exactly 10 digits"
+		} else {
+			numericRegex := regexp.MustCompile(`^[0-9]+$`)
+			if !numericRegex.MatchString(item.Phone) {
+				errorsMap["phone"] = "Phone must contain exactly 10 digits"
+			}
+		}
+
+		if len(item.OfficePhone) != 10 {
+			errorsMap["officePhone"] = "Office phone must contain exactly 10 digits"
+		} else {
+			numericRegex := regexp.MustCompile(`^[0-9]+$`)
+			if !numericRegex.MatchString(item.OfficePhone) {
+				errorsMap["officePhone"] = "Office phone must contain exactly 10 digits"
+			}
+		}
+
+		if strings.TrimSpace(item.Owner) == "" {
+			errorsMap["owner"] = "Owner is required"
+		} else {
+			exists, err := s.leadRepo.CheckUserExists(item.Owner)
+			if err != nil || !exists {
+				errorsMap["owner"] = "Owner does not exist"
+			} else {
+				active, err := s.leadRepo.CheckUserActive(item.Owner)
+				if err != nil || !active {
+					errorsMap["owner"] = "Owner must be active"
+				}
+			}
+		}
+
+		var normalizedStage string
+		if strings.TrimSpace(item.Stage) == "" {
+			errorsMap["stage"] = "Stage is required"
+		} else {
+			exists, dbStageName, err := s.leadRepo.CheckStageExistsCaseInsensitive(item.Stage)
+			if err != nil || !exists {
+				errorsMap["stage"] = "Stage does not exist"
+			} else {
+				normalizedStage = dbStageName
+			}
+		}
+
+		validStatuses := map[string]bool{"Open": true, "In Progress": true, "Won": true, "Lost": true}
+		if !validStatuses[item.Status] {
+			errorsMap["status"] = "Status must be Open, In Progress, Won, or Lost"
+		}
+
+		validSentiments := map[string]bool{"Positive": true, "Neutral": true, "Negative": true}
+		if !validSentiments[item.Sentiment] {
+			errorsMap["sentiment"] = "Sentiment must be Positive, Neutral, or Negative"
+		}
+
+		validPriorities := map[string]bool{"Low": true, "Normal": true, "High": true, "Urgent": true}
+		if !validPriorities[item.Priority] {
+			errorsMap["priority"] = "Priority must be Low, Normal, High, or Urgent"
+		}
+
+		if emailTrimmed != "" && errorsMap["email"] == "" {
+			if batchEmails[emailTrimmed] {
+				errorsMap["email"] = "duplicate email within request"
+			}
+		}
+		if companyTrimmed != "" && errorsMap["company"] == "" {
+			compLower := strings.ToLower(companyTrimmed)
+			if batchCompanies[compLower] {
+				errorsMap["company"] = "duplicate company within request"
+			}
+		}
+
+		if emailTrimmed != "" && errorsMap["email"] == "" {
+			exists, err := s.leadRepo.CheckEmailExists(emailTrimmed)
+			if err == nil && exists {
+				errorsMap["email"] = "duplicate email"
+			}
+		}
+		if companyTrimmed != "" && errorsMap["company"] == "" {
+			exists, err := s.leadRepo.CheckCompanyExists(companyTrimmed)
+			if err == nil && exists {
+				errorsMap["company"] = "duplicate company"
+			}
+		}
+
+		if len(errorsMap) > 0 {
+			failed = append(failed, models.BulkCreateFailedResponse{
+				Index:   i,
+				Company: item.Company,
+				Errors:  errorsMap,
+			})
+			continue
+		}
+
+		batchEmails[emailTrimmed] = true
+		batchCompanies[strings.ToLower(companyTrimmed)] = true
+
+		lead := &models.Lead{
+			Company:            companyTrimmed,
+			Contact:            &item.Contact,
+			Email:              &emailTrimmed,
+			Phone:              &item.Phone,
+			OfficePhone:        &item.OfficePhone,
+			OfficePhoneCountry: &item.OfficePhoneCountry,
+			Owner:              &item.Owner,
+			Stage:              &normalizedStage,
+			Status:             &item.Status,
+			Sentiment:          &item.Sentiment,
+			Priority:           &item.Priority,
+		}
+		if item.ProjectName != "" {
+			lead.ProjectName = &item.ProjectName
+		}
+		if item.Industry != "" {
+			lead.Industry = &item.Industry
+		}
+		if item.Size != "" {
+			lead.Size = &item.Size
+		}
+		if item.Region != "" {
+			lead.Region = &item.Region
+		}
+		if item.Source != "" {
+			lead.Source = &item.Source
+		}
+
+		err = s.leadRepo.CreateLead(lead)
+		if err != nil {
+			failed = append(failed, models.BulkCreateFailedResponse{
+				Index:   i,
+				Company: item.Company,
+				Errors:  map[string]string{"database": err.Error()},
+			})
+		} else {
+			created = append(created, models.BulkCreateCreatedResponse{
+				LeadID:  lead.LeadID,
+				Company: lead.Company,
+			})
+		}
+	}
+
+	return &models.BulkCreateResponse{
+		Success: true,
+		Summary: models.BulkCreateSummary{
+			Total:   total,
+			Created: len(created),
+			Failed:  len(failed),
+		},
+		Created: created,
+		Failed:  failed,
+	}, nil
 }

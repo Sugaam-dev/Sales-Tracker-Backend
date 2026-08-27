@@ -42,3 +42,42 @@ func ToActivityResponse(a Activity) ActivityResponse {
 		Completed: a.Completed,
 	}
 }
+
+type CreateActivityRequest struct {
+	Type    string `json:"type" binding:"required,oneof=Call Email Demo Other"`
+	Desc    string `json:"desc" binding:"required"`
+	Outcome string `json:"outcome"`
+	DueDate string `json:"dueDate" binding:"omitempty,datetime=2006-01-02"`
+}
+
+type CompleteActivityRequest struct {
+	Completed bool `json:"completed"`
+}
+
+type BulkCreateLeadsRequest struct {
+	Leads []CreateLeadRequest `json:"leads" binding:"required,min=1,max=200,dive"`
+}
+
+type BulkCreateCreatedResponse struct {
+	LeadID  string `json:"leadId"`
+	Company string `json:"company"`
+}
+
+type BulkCreateFailedResponse struct {
+	Index   int               `json:"index"`
+	Company string            `json:"company"`
+	Errors  map[string]string `json:"errors"`
+}
+
+type BulkCreateSummary struct {
+	Total   int `json:"total"`
+	Created int `json:"created"`
+	Failed  int `json:"failed"`
+}
+
+type BulkCreateResponse struct {
+	Success bool                        `json:"success"`
+	Summary BulkCreateSummary           `json:"summary"`
+	Created []BulkCreateCreatedResponse `json:"created"`
+	Failed  []BulkCreateFailedResponse  `json:"failed"`
+}

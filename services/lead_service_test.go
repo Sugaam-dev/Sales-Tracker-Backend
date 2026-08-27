@@ -10,6 +10,10 @@ import (
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
+
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func strPtr(s string) *string {
@@ -74,9 +78,16 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 		t.Errorf("Expected exactly 8 stages after second migration run, got %d (err: %v)", stageCount, err)
 	}
 
+	// Initialize GORM
+	importGormStr := cfg.DB.DSN(cfg.DB.Name)
+	gormDB, err := gorm.Open(postgres.Open(importGormStr), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to connect gorm: %v", err)
+	}
+
 	// Initialize repositories and service
 	userRepo := repository.NewUserRepository(pool)
-	leadRepo := repository.NewLeadRepository(pool)
+	leadRepo := repository.NewLeadRepository(pool, gormDB)
 	leadService := NewLeadService(leadRepo, userRepo)
 
 	// Clean up existing test data safely
@@ -287,8 +298,15 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	defer pool.Close()
 
 	ctx := context.Background()
+	// Initialize GORM
+	importGormStr := cfg.DB.DSN(cfg.DB.Name)
+	gormDB, err := gorm.Open(postgres.Open(importGormStr), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to connect gorm: %v", err)
+	}
+
 	userRepo := repository.NewUserRepository(pool)
-	leadRepo := repository.NewLeadRepository(pool)
+	leadRepo := repository.NewLeadRepository(pool, gormDB)
 	leadService := NewLeadService(leadRepo, userRepo)
 
 	// Clean up and seed one lead for status testing
@@ -301,7 +319,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 1. Test status mapping update (Open -> Prospecting)
-	res, err := leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	res, err := leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Open"),
 	})
 	if err != nil || res.Stage == nil || *res.Stage != "Prospecting" {
@@ -309,7 +327,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 2. Test status mapping update (New -> Qualification)
-	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("New"),
 	})
 	if err != nil || res.Stage == nil || *res.Stage != "Qualification" {
@@ -317,7 +335,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 3. Test backward progression (New -> Open)
-	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Open"),
 	})
 	if err != nil || res.Status == nil || *res.Status != "Open" || res.Stage == nil || *res.Stage != "Prospecting" {
@@ -325,7 +343,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 4. Test invalid status-stage combination
-	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Won"),
 		Stage:  strPtr("Prospecting"),
 	})
@@ -334,7 +352,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 5. Test Lost Reason validation (missing reason)
-	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Lost"),
 	})
 	if err == nil {
@@ -342,7 +360,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 6. Test Lost Reason validation (empty spaces)
-	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status:     strPtr("Lost"),
 		LostReason: strPtr("   "),
 	})
@@ -352,7 +370,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 
 	// 7. Test Lost Reason valid submit
 	reason := "Pricing too high compared to competitors"
-	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status:     strPtr("Lost"),
 		LostReason: &reason,
 	})
@@ -361,7 +379,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 8. Test Lost Reason retention when moving away from Lost status
-	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Interested"),
 	})
 	if err != nil || res.Status == nil || *res.Status != "Interested" || res.Stage == nil || *res.Stage != "Proposal" || res.LostReason == nil || *res.LostReason != reason {
@@ -369,7 +387,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 9. Test Atomicity: Ensure invalid updates do not modify the lead partially in database
-	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
 		Status: strPtr("Won"),
 		Stage:  strPtr("Prospecting"), // Inconsistent stage
 	})
@@ -391,13 +409,15 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	_ = godotenv.Load("../.env")
 	// Set test environment configuration
 	os.Setenv("APP_ENV", "test")
-	os.Setenv("JWT_SECRET", "super-secret-key-32-characters-long")
+	if os.Getenv("JWT_SECRET") == "" {
+		os.Setenv("JWT_SECRET", "super-secret-key-32-characters-long")
+	}
 	
 	code := m.Run()
 
 	os.Unsetenv("APP_ENV")
-	os.Unsetenv("JWT_SECRET")
 	os.Exit(code)
 }

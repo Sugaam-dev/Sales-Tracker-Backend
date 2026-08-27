@@ -250,3 +250,113 @@ func (ac *LeadController) GetLead(c *gin.Context) {
 		"data":    lead,
 	})
 }
+
+func (ctrl *LeadController) CreateActivity(c *gin.Context) {
+	leadID := c.Param("id")
+
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	var req models.CreateActivityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Validation failed",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	resp, err := ctrl.service.CreateActivity(leadID, userRole, userEmail, req)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (ctrl *LeadController) CompleteActivity(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		ctrl.errorResponse(c, http.StatusBadRequest, "Invalid activity ID")
+		return
+	}
+
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	var req models.CompleteActivityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Validation failed",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	resp, err := ctrl.service.CompleteActivity(uint(id), userRole, userEmail, req.Completed)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	var req models.BulkCreateLeadsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Validation failed",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	resp, err := ctrl.service.BulkCreateLeads(userRole, userEmail, req)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	status := http.StatusOK
+	if resp.Summary.Created == resp.Summary.Total {
+		status = http.StatusCreated
+	}
+
+	c.JSON(status, resp)
+}
