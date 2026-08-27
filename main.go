@@ -9,9 +9,13 @@ import (
 	"crm-auth-service/controllers"
 	"crm-auth-service/helpers"
 	"crm-auth-service/middleware"
+	"crm-auth-service/models"
 	"crm-auth-service/repository"
 	"crm-auth-service/routes"
 	"crm-auth-service/services"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -32,6 +36,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Initialize GORM
+	importGormStr := cfg.DB.DSN(cfg.DB.Name)
+	gormDB, err := gorm.Open(postgres.Open(importGormStr), &gorm.Config{})
+	if err != nil {
+		log.Error("failed to connect gorm", "error", err)
+		os.Exit(1)
+	}
+
+	// Migrate Lead models
+	gormDB.AutoMigrate(&models.Lead{}, &models.Activity{}, &models.LeadStage{})
+	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
 
 	// Dependency Injection: Repository data-access layer.
 	userRepo := repository.NewUserRepository(db)
@@ -64,6 +80,10 @@ func main() {
 		log,
 	)
 
+	leadRepo := repository.NewLeadRepository(gormDB)
+	leadService := services.NewLeadService(leadRepo)
+	leadController := controllers.NewLeadController(leadService)
+
 	// Dependency Injection: HTTP layer controller.
 	authController := controllers.NewAuthController(authService, log)
 
@@ -77,7 +97,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, jwtManager)
+	routes.RegisterRoutes(router, authController, leadController, jwtManager)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
