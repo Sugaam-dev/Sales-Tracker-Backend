@@ -62,6 +62,9 @@ func (m *mockUserRepo) UpdateMobileVerified(ctx context.Context, id uuid.UUID) e
 func (m *mockUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, newPasswordHash string) error {
 	return nil
 }
+func (m *mockUserRepo) FindActiveUsers(ctx context.Context) ([]*models.User, error) {
+	return nil, nil
+}
 
 // mockRoundTripper intercepts HTTP requests for tests
 type mockRoundTripper func(req *http.Request) (*http.Response, error)
