@@ -9,9 +9,13 @@ import (
 	"crm-auth-service/controllers"
 	"crm-auth-service/helpers"
 	"crm-auth-service/middleware"
+	"crm-auth-service/models"
 	"crm-auth-service/repository"
 	"crm-auth-service/routes"
 	"crm-auth-service/services"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -32,6 +36,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Initialize GORM
+	importGormStr := cfg.DB.DSN(cfg.DB.Name)
+	gormDB, err := gorm.Open(postgres.Open(importGormStr), &gorm.Config{})
+	if err != nil {
+		log.Error("failed to connect gorm", "error", err)
+		os.Exit(1)
+	}
+
+	// Migrate Lead models
+	gormDB.AutoMigrate(&models.Lead{}, &models.Activity{}, &models.LeadStage{})
+	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
 
 	// Dependency Injection: Repository data-access layer.
 	userRepo := repository.NewUserRepository(db)
@@ -68,7 +84,7 @@ func main() {
 	authController := controllers.NewAuthController(authService, log)
 
 	// Lead Module dependencies
-	leadRepo := repository.NewLeadRepository(db)
+	leadRepo := repository.NewLeadRepository(db, gormDB)
 	leadService := services.NewLeadService(leadRepo, userRepo)
 	leadController := controllers.NewLeadController(leadService, log)
 

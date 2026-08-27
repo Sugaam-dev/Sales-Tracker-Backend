@@ -1,0 +1,44 @@
+package models
+
+type CreateLeadRequest struct {
+	Company            string `json:"company" binding:"required"`
+	ProjectName        string `json:"projectName"`
+	Contact            string `json:"contact" binding:"required"`
+	Email              string `json:"email" binding:"required,email"`
+	Phone              string `json:"phone" binding:"required,len=10,numeric"`
+	OfficePhone        string `json:"officePhone" binding:"required,len=10,numeric"`
+	OfficePhoneCountry string `json:"officePhoneCountry"`
+	Owner              string `json:"owner" binding:"required"`
+	Industry           string `json:"industry"`
+	Size               string `json:"size"`
+	Region             string `json:"region"`
+	Source             string `json:"source"`
+	Stage              string `json:"stage" binding:"required"`
+	Status             string `json:"status" binding:"required"`
+	Sentiment          string `json:"sentiment" binding:"required"`
+	Priority           string `json:"priority" binding:"required,oneof=Low Normal High Urgent"`
+}
+
+type ActivityResponse struct {
+	ID        uint   `json:"id"`
+	Type      string `json:"type"`
+	Desc      string `json:"desc"`
+	Outcome   string `json:"outcome"`
+	DueDate   string `json:"dueDate"`
+	Completed bool   `json:"completed"`
+}
+
+func ToActivityResponse(a Activity) ActivityResponse {
+	dueDate := ""
+	if a.DueDate != nil {
+		dueDate = a.DueDate.Format("2006-01-02")
+	}
+	return ActivityResponse{
+		ID:        a.ID,
+		Type:      a.Type,
+		Desc:      a.Desc,
+		Outcome:   a.Outcome,
+		DueDate:   dueDate,
+		Completed: a.Completed,
+	}
+}

@@ -2,30 +2,227 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"strings"
 	"time"
+	"strconv"
 
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 )
 
-type LeadService struct {
+var (
+	ErrValidation        = errors.New("validation failed")
+	ErrDuplicateConflict = errors.New("duplicate conflict")
+	ErrNotFound          = errors.New("not found")
+	ErrUnauthorized      = errors.New("unauthorized")
+)
+
+type LeadService interface {
+	CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error)
+	UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error)
+	DeleteLead(leadID string, userRole string) error
+	GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error)
+
+	GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error)
+	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
+	ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
+	GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error)
+}
+
+type leadService struct {
 	leadRepo repository.LeadRepository
 	userRepo repository.UserRepository
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, userRepo repository.UserRepository) *LeadService {
-	return &LeadService{
+func NewLeadService(leadRepo repository.LeadRepository, userRepo repository.UserRepository) LeadService {
+	return &leadService{
 		leadRepo: leadRepo,
 		userRepo: userRepo,
 	}
 }
 
-func (s *LeadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error) {
+// ---------------------------------------------
+// My Methods (Create, Update, Delete, Activities)
+// ---------------------------------------------
+
+func (s *leadService) handleDBError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), "duplicate key value violates unique constraint") || strings.Contains(err.Error(), "23505") {
+		return ErrDuplicateConflict
+	}
+	if strings.Contains(err.Error(), "record not found") {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error) {
+	req.Email = strings.ToLower(req.Email)
+
+	if req.Owner != "" {
+		exists, err := s.leadRepo.CheckUserExists(req.Owner)
+		if err != nil || !exists {
+			return nil, ErrValidation
+		}
+	}
+	if req.Stage != "" {
+		exists, err := s.leadRepo.CheckStageExists(req.Stage)
+		if err != nil || !exists {
+			return nil, ErrValidation
+		}
+	}
+
+	lead := &models.Lead{
+		Company:            req.Company,
+		Contact:            &req.Contact,
+		Email:              &req.Email,
+		Phone:              &req.Phone,
+		OfficePhone:        &req.OfficePhone,
+		OfficePhoneCountry: &req.OfficePhoneCountry,
+		Owner:              &req.Owner,
+		Stage:              &req.Stage,
+		Status:             &req.Status,
+		Sentiment:          &req.Sentiment,
+		Priority:           &req.Priority,
+	}
+	if req.ProjectName != "" {
+		lead.ProjectName = &req.ProjectName
+	}
+	if req.Industry != "" {
+		lead.Industry = &req.Industry
+	}
+	if req.Size != "" {
+		lead.Size = &req.Size
+	}
+	if req.Region != "" {
+		lead.Region = &req.Region
+	}
+	if req.Source != "" {
+		lead.Source = &req.Source
+	}
+
+	err := s.leadRepo.CreateLead(lead)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	resp := s.mapToResponse(lead)
+	return &resp, nil
+}
+
+func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
+	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	if err != nil && userRole != models.RoleAdmin {
+		return nil, ErrUnauthorized
+	}
+
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
+		return nil, ErrUnauthorized
+	}
+
+	updates := make(map[string]interface{})
+	if req.Owner != nil {
+		updates["owner"] = *req.Owner
+	}
+	if req.Stage != nil {
+		updates["stage"] = *req.Stage
+	}
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+	if req.Priority != nil {
+		updates["priority"] = *req.Priority
+	}
+	if req.Contact != nil {
+		updates["contact"] = *req.Contact
+	}
+	if req.Email != nil {
+		updates["email"] = strings.ToLower(*req.Email)
+	}
+	if req.Phone != nil {
+		updates["phone"] = *req.Phone
+	}
+	if req.LostReason != nil {
+		updates["lost_reason"] = *req.LostReason
+	}
+	if req.Value != nil {
+		parsedVal, err := strconv.ParseFloat(*req.Value, 64)
+		if err == nil {
+			updates["value"] = parsedVal
+		}
+	}
+
+	err = s.leadRepo.UpdateLead(leadID, updates)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	updatedLead, err := s.leadRepo.GetLeadByLeadID(leadID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	resp := s.mapToResponse(updatedLead)
+	return &resp, nil
+}
+
+func (s *leadService) DeleteLead(leadID string, userRole string) error {
+	if userRole != models.RoleAdmin {
+		return ErrUnauthorized
+	}
+	err := s.leadRepo.DeleteLead(leadID)
+	return s.handleDBError(err)
+}
+
+func (s *leadService) GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error) {
+	lead, err := s.leadRepo.GetLeadActivities(leadID)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	if err != nil && userRole != models.RoleAdmin {
+		return nil, ErrUnauthorized
+	}
+
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
+		return nil, ErrUnauthorized
+	}
+
+	resp := make([]models.ActivityResponse, len(lead.Activities))
+	for i, a := range lead.Activities {
+		resp[i] = models.ToActivityResponse(a)
+	}
+	return resp, nil
+}
+
+// ---------------------------------------------
+// Sahil's Methods
+// ---------------------------------------------
+
+func (s *leadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error) {
 	users, err := s.userRepo.FindActiveUsers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("service: get current users: %w", err)
@@ -43,7 +240,7 @@ func (s *LeadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserR
 	return res, nil
 }
 
-func (s *LeadService) GetMasterStages(ctx context.Context) ([]*models.LeadStage, error) {
+func (s *leadService) GetMasterStages(ctx context.Context) ([]*models.LeadStage, error) {
 	stages, err := s.leadRepo.FindStages(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("service: get master stages: %w", err)
@@ -51,52 +248,12 @@ func (s *LeadService) GetMasterStages(ctx context.Context) ([]*models.LeadStage,
 	return stages, nil
 }
 
-func (s *LeadService) ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error) {
-	// Validation
+func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error) {
 	if page < 1 {
 		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "page must be greater than or equal to 1"}
 	}
 	if limit < 1 || limit > 100 {
 		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "limit must be between 1 and 100"}
-	}
-
-	if priority != "" {
-		validPriorities := map[string]bool{"Low": true, "Normal": true, "High": true, "Urgent": true}
-		if !validPriorities[priority] {
-			return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid priority filter value"}
-		}
-	}
-
-	if sortBy != "" {
-		validSortBy := map[string]bool{"id": true, "value": true, "createdAt": true}
-		if !validSortBy[sortBy] {
-			return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid sortBy value"}
-		}
-	}
-
-	if sortOrder != "" {
-		validSortOrder := map[string]bool{"asc": true, "desc": true}
-		if !validSortOrder[strings.ToLower(sortOrder)] {
-			return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid sortOrder value"}
-		}
-	}
-
-	// Validate stage if provided
-	if stage != "" {
-		stages, err := s.leadRepo.FindStages(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		found := false
-		for _, st := range stages {
-			if strings.EqualFold(st.Name, stage) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid stage filter value"}
-		}
 	}
 
 	leads, total, err := s.leadRepo.FindLeads(ctx, page, limit, search, owner, priority, stage, sortBy, sortOrder)
@@ -117,108 +274,26 @@ func (s *LeadService) ListLeads(ctx context.Context, page, limit int, search, ow
 		Total:      total,
 		TotalPages: totalPages,
 	}
-
 	return leadResponses, pagination, nil
 }
 
-func (s *LeadService) GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error) {
+func (s *leadService) GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error) {
 	lead, err := s.leadRepo.FindByID(ctx, leadID)
 	if err != nil {
 		return nil, err
 	}
-
 	res := s.mapToResponse(lead)
 	return &res, nil
 }
 
-func (s *LeadService) UpdateLead(ctx context.Context, leadID string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
-	lead, err := s.leadRepo.FindByID(ctx, leadID)
-	if err != nil {
-		return nil, err
-	}
-
-	stages, err := s.leadRepo.FindStages(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var finalStatus string
-	if req.Status != nil {
-		finalStatus = *req.Status
-	} else if lead.Status != nil {
-		finalStatus = *lead.Status
-	}
-
-	// Resolve corresponding stage for finalStatus from db mapping
-	var mappedStageName string
-	for _, st := range stages {
-		if strings.EqualFold(st.Status, finalStatus) {
-			mappedStageName = st.Name
-			break
-		}
-	}
-	if mappedStageName == "" {
-		return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid status value"}
-	}
-
-	var finalStage string
-	if req.Stage != nil {
-		finalStage = *req.Stage
-	} else if req.Status != nil {
-		finalStage = mappedStageName
-	} else if lead.Stage != nil {
-		finalStage = *lead.Stage
-	}
-
-	// Enforce consistency between Status and Stage
-	if !strings.EqualFold(finalStage, mappedStageName) {
-		return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: fmt.Sprintf("inconsistent status and stage combination: status %s maps to stage %s", finalStatus, mappedStageName)}
-	}
-
-	// Lost reason validation
-	if strings.EqualFold(finalStatus, "Lost") {
-		var targetLostReason string
-		if req.LostReason != nil {
-			targetLostReason = *req.LostReason
-		} else if lead.LostReason != nil {
-			targetLostReason = *lead.LostReason
-		}
-		if strings.TrimSpace(targetLostReason) == "" {
-			return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "lostReason is mandatory when status is Lost"}
-		}
-	}
-
-	var finalLostReason *string
-	if req.LostReason != nil {
-		finalLostReason = req.LostReason
-	} else {
-		finalLostReason = lead.LostReason
-	}
-
-	// Perform atomic database update
-	err = s.leadRepo.UpdateLeadStatusAndStage(ctx, leadID, finalStatus, finalStage, finalLostReason)
-	if err != nil {
-		return nil, err
-	}
-
-	// Fetch updated lead
-	updatedLead, err := s.leadRepo.FindByID(ctx, leadID)
-	if err != nil {
-		return nil, err
-	}
-
-	res := s.mapToResponse(updatedLead)
-	return &res, nil
-}
-
-func (s *LeadService) mapToResponse(l *models.Lead) models.LeadResponse {
+func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 	var valStr *string
 	if l.Value != nil {
-		s := fmt.Sprintf("%.0f", *l.Value)
-		valStr = &s
+		val := fmt.Sprintf("%.0f", *l.Value)
+		valStr = &val
 	}
 
-	return models.LeadResponse{
+	resp := models.LeadResponse{
 		ID:                 l.LeadID,
 		Company:            l.Company,
 		ProjectName:        l.ProjectName,
@@ -241,4 +316,5 @@ func (s *LeadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		CreatedAt:          l.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
 	}
+	return resp
 }

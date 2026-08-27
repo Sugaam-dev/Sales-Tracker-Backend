@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -16,19 +17,157 @@ import (
 var leadIDRegex = regexp.MustCompile(`^L-\d+$`)
 
 type LeadController struct {
-	leadService *services.LeadService
-	log         *slog.Logger
+	service services.LeadService
+	log     *slog.Logger
 }
 
-func NewLeadController(leadService *services.LeadService, log *slog.Logger) *LeadController {
+func NewLeadController(service services.LeadService, log *slog.Logger) *LeadController {
 	return &LeadController{
-		leadService: leadService,
-		log:         log,
+		service: service,
+		log:     log,
 	}
 }
 
+func (ctrl *LeadController) errorResponse(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{
+		"success": false,
+		"message": message,
+	})
+}
+
+func (ctrl *LeadController) handleServiceError(c *gin.Context, err error) {
+	if errors.Is(err, services.ErrNotFound) {
+		ctrl.errorResponse(c, http.StatusNotFound, "Lead not found")
+	} else if errors.Is(err, services.ErrUnauthorized) {
+		ctrl.errorResponse(c, http.StatusForbidden, "Unauthorized to access this lead")
+	} else if errors.Is(err, services.ErrValidation) {
+		ctrl.errorResponse(c, http.StatusBadRequest, "Validation failed")
+	} else if errors.Is(err, services.ErrDuplicateConflict) {
+		ctrl.errorResponse(c, http.StatusConflict, "Duplicate email or company conflict")
+	} else {
+		ctrl.errorResponse(c, http.StatusInternalServerError, "Internal server error")
+	}
+}
+
+// ---------------------------------------------
+// My Endpoints (Create, Update, Delete, Activities)
+// ---------------------------------------------
+
+func (ctrl *LeadController) CreateLead(c *gin.Context) {
+	var req models.CreateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Validation failed",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	resp, err := ctrl.service.CreateLead(req)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (ctrl *LeadController) UpdateLead(c *gin.Context) {
+	id := c.Param("id")
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	if !leadIDRegex.MatchString(id) {
+		ctrl.errorResponse(c, http.StatusNotFound, "Lead not found")
+		return
+	}
+
+	var req models.UpdateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Validation failed",
+			"errors":  err.Error(),
+		})
+		return
+	}
+
+	resp, err := ctrl.service.UpdateLead(id, userRole, userEmail, req)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (ctrl *LeadController) DeleteLead(c *gin.Context) {
+	id := c.Param("id")
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	err := ctrl.service.DeleteLead(id, userRole)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Lead deleted successfully",
+	})
+}
+
+func (ctrl *LeadController) GetLeadActivities(c *gin.Context) {
+	id := c.Param("id")
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	resp, err := ctrl.service.GetLeadActivities(id, userRole, userEmail)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	if len(resp) == 0 {
+		resp = []models.ActivityResponse{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+// ---------------------------------------------
+// Sahil's Endpoints
+// ---------------------------------------------
+
 func (ac *LeadController) GetCurrentUsers(c *gin.Context) {
-	users, err := ac.leadService.GetCurrentUsers(c.Request.Context())
+	users, err := ac.service.GetCurrentUsers(c.Request.Context())
 	if err != nil {
 		helpers.RespondError(c, err, ac.log)
 		return
@@ -41,7 +180,7 @@ func (ac *LeadController) GetCurrentUsers(c *gin.Context) {
 }
 
 func (ac *LeadController) GetMasterStages(c *gin.Context) {
-	stages, err := ac.leadService.GetMasterStages(c.Request.Context())
+	stages, err := ac.service.GetMasterStages(c.Request.Context())
 	if err != nil {
 		helpers.RespondError(c, err, ac.log)
 		return
@@ -75,7 +214,7 @@ func (ac *LeadController) ListLeads(c *gin.Context) {
 		return
 	}
 
-	leads, pagination, err := ac.leadService.ListLeads(c.Request.Context(), page, limit, search, owner, priority, stage, sortBy, sortOrder)
+	leads, pagination, err := ac.service.ListLeads(c.Request.Context(), page, limit, search, owner, priority, stage, sortBy, sortOrder)
 	if err != nil {
 		helpers.RespondError(c, err, ac.log)
 		return
@@ -91,44 +230,12 @@ func (ac *LeadController) ListLeads(c *gin.Context) {
 func (ac *LeadController) GetLead(c *gin.Context) {
 	id := c.Param("id")
 
-	// Validate public Lead ID format (L-0001)
 	if !leadIDRegex.MatchString(id) {
 		helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
 		return
 	}
 
-	lead, err := ac.leadService.GetLead(c.Request.Context(), id)
-	if err != nil {
-		if err == helpers.ErrNotFound {
-			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
-			return
-		}
-		helpers.RespondError(c, err, ac.log)
-		return
-	}
-
-	helpers.SuccessResponse(c, http.StatusOK, gin.H{
-		"success": true,
-		"data":    lead,
-	})
-}
-
-func (ac *LeadController) UpdateLead(c *gin.Context) {
-	id := c.Param("id")
-
-	// Validate public Lead ID format (L-0001)
-	if !leadIDRegex.MatchString(id) {
-		helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
-		return
-	}
-
-	var req models.UpdateLeadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.ErrorResponse(c, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	lead, err := ac.leadService.UpdateLead(c.Request.Context(), id, req)
+	lead, err := ac.service.GetLead(c.Request.Context(), id)
 	if err != nil {
 		if err == helpers.ErrNotFound {
 			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")

@@ -37,12 +37,26 @@ type Lead struct {
 	Priority           *string    `json:"priority" gorm:"type:varchar"`
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
 	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
+	Activities         []Activity `json:"activities,omitempty" gorm:"foreignKey:LeadID;references:LeadID"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
 	DeletedAt          *time.Time `json:"deletedAt,omitempty" gorm:"index"`
 }
 
 func (Lead) TableName() string { return "leads" }
+
+type Activity struct {
+	ID        uint       `gorm:"primaryKey"`
+	LeadID    string     `gorm:"index;not null;type:varchar"`
+	Type      string     `gorm:"not null"`
+	Desc      string     `gorm:"not null"`
+	Outcome   string
+	DueDate   *time.Time
+	Completed bool       `gorm:"default:false"`
+	CreatedAt time.Time
+}
+
+func (Activity) TableName() string { return "activities" }
 
 type ActiveUserResponse struct {
 	ID       uuid.UUID `json:"id"`
@@ -89,7 +103,13 @@ type LeadListResponse struct {
 }
 
 type UpdateLeadRequest struct {
-	Status     *string `json:"status"`
-	Stage      *string `json:"stage"`
-	LostReason *string `json:"lostReason"`
+	Owner      *string `json:"owner,omitempty"`
+	Stage      *string `json:"stage,omitempty"`
+	Status     *string `json:"status,omitempty"`
+	Priority   *string `json:"priority,omitempty"`
+	Contact    *string `json:"contact,omitempty"`
+	Email      *string `json:"email,omitempty"`
+	Phone      *string `json:"phone,omitempty"`
+	Value      *string `json:"value,omitempty"`
+	LostReason *string `json:"lostReason,omitempty"`
 }

@@ -8,12 +8,22 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 )
 
 type LeadRepository interface {
+	CheckUserExists(name string) (bool, error)
+	CheckStageExists(stage string) (bool, error)
+	CreateLead(lead *models.Lead) error
+	GetLeadByLeadID(leadID string) (*models.Lead, error)
+	UpdateLead(leadID string, updates map[string]interface{}) error
+	DeleteLead(leadID string) error
+	GetLeadActivities(leadID string) (*models.Lead, error)
+	GetUserNameByEmail(email string) (string, error)
+
 	FindStages(ctx context.Context) ([]*models.LeadStage, error)
 	FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
 	FindByID(ctx context.Context, leadID string) (*models.Lead, error)
@@ -21,16 +31,98 @@ type LeadRepository interface {
 }
 
 type leadRepository struct {
-	db *pgxpool.Pool
+	pgx *pgxpool.Pool
+	db  *gorm.DB
 }
 
-func NewLeadRepository(db *pgxpool.Pool) LeadRepository {
-	return &leadRepository{db: db}
+func NewLeadRepository(pgx *pgxpool.Pool, db *gorm.DB) LeadRepository {
+	return &leadRepository{
+		pgx: pgx,
+		db:  db,
+	}
 }
+
+// ---------------------------------------------
+// My Methods (GORM)
+// ---------------------------------------------
+
+func (r *leadRepository) GetUserNameByEmail(email string) (string, error) {
+	var user models.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	return user.Name, err
+}
+
+func (r *leadRepository) CheckUserExists(name string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.User{}).Where("name = ?", name).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *leadRepository) CheckStageExists(stage string) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.LeadStage{}).Where("name = ? AND is_active = ?", stage, true).Count(&count).Error
+	return count > 0, err
+}
+
+func (r *leadRepository) CreateLead(lead *models.Lead) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var n int64
+		if err := tx.Raw("SELECT nextval('lead_id_seq')").Scan(&n).Error; err != nil {
+			return err
+		}
+		lead.LeadID = fmt.Sprintf("L-%04d", n)
+		return tx.Create(lead).Error
+	})
+}
+
+func (r *leadRepository) GetLeadByLeadID(leadID string) (*models.Lead, error) {
+	var lead models.Lead
+	err := r.db.Where("lead_id = ?", leadID).First(&lead).Error
+	if err != nil {
+		return nil, err
+	}
+	return &lead, nil
+}
+
+func (r *leadRepository) UpdateLead(leadID string, updates map[string]interface{}) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var lead models.Lead
+		if err := tx.Where("lead_id = ?", leadID).First(&lead).Error; err != nil {
+			return err
+		}
+		return tx.Model(&lead).Updates(updates).Error
+	})
+}
+
+func (r *leadRepository) DeleteLead(leadID string) error {
+	res := r.db.Where("lead_id = ?", leadID).Delete(&models.Lead{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *leadRepository) GetLeadActivities(leadID string) (*models.Lead, error) {
+	var lead models.Lead
+	err := r.db.Preload("Activities", func(db *gorm.DB) *gorm.DB {
+		return db.Order("created_at desc")
+	}).Where("lead_id = ?", leadID).First(&lead).Error
+	if err != nil {
+		return nil, err
+	}
+	return &lead, nil
+}
+
+// ---------------------------------------------
+// Sahil's Methods (PGX)
+// ---------------------------------------------
 
 func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, error) {
 	query := "SELECT id, name, status, sort_order, is_active FROM lead_stages WHERE is_active = TRUE ORDER BY sort_order ASC"
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.pgx.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("repo: find stages: %w", err)
 	}
@@ -52,7 +144,6 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	var args []any
 	argCount := 1
 
-	// Soft-delete check
 	whereClauses = append(whereClauses, "deleted_at IS NULL")
 
 	if search != "" {
@@ -61,19 +152,16 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 		args = append(args, "%"+search+"%")
 		argCount++
 	}
-
 	if owner != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("owner = $%d", argCount))
 		args = append(args, owner)
 		argCount++
 	}
-
 	if priority != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("priority = $%d", argCount))
 		args = append(args, priority)
 		argCount++
 	}
-
 	if stage != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("LOWER(stage) = LOWER($%d)", argCount))
 		args = append(args, stage)
@@ -85,19 +173,16 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// 1. Get Count
 	countQuery := "SELECT COUNT(*) FROM leads" + whereSQL
 	var total int64
-	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
+	err := r.pgx.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repo: count leads: %w", err)
 	}
-
 	if total == 0 {
 		return []*models.Lead{}, 0, nil
 	}
 
-	// 2. Sorting & Pagination
 	var orderByCol string
 	switch sortBy {
 	case "id":
@@ -122,7 +207,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, created_at, updated_at 
 				  FROM leads` + whereSQL + limitOffsetSQL
 
-	rows, err := r.db.Query(ctx, dataQuery, args...)
+	rows, err := r.pgx.Query(ctx, dataQuery, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("repo: find leads data: %w", err)
 	}
@@ -132,39 +217,19 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	for rows.Next() {
 		var l models.Lead
 		err := rows.Scan(
-			&l.ID,
-			&l.LeadID,
-			&l.Company,
-			&l.ProjectName,
-			&l.Contact,
-			&l.Email,
-			&l.Phone,
-			&l.OfficePhone,
-			&l.OfficePhoneCountry,
-			&l.Owner,
-			&l.Industry,
-			&l.Size,
-			&l.Region,
-			&l.Source,
-			&l.Stage,
-			&l.Status,
-			&l.Sentiment,
-			&l.Priority,
-			&l.Value,
-			&l.LostReason,
-			&l.CreatedAt,
-			&l.UpdatedAt,
+			&l.ID, &l.LeadID, &l.Company, &l.ProjectName, &l.Contact,
+			&l.Email, &l.Phone, &l.OfficePhone, &l.OfficePhoneCountry, &l.Owner,
+			&l.Industry, &l.Size, &l.Region, &l.Source, &l.Stage, &l.Status,
+			&l.Sentiment, &l.Priority, &l.Value, &l.LostReason, &l.CreatedAt, &l.UpdatedAt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("repo: scan lead: %w", err)
 		}
 		leads = append(leads, &l)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-
 	return leads, total, nil
 }
 
@@ -172,32 +237,14 @@ func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.L
 	query := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, created_at, updated_at 
 			  FROM leads 
 			  WHERE lead_id = $1 AND deleted_at IS NULL`
-	row := r.db.QueryRow(ctx, query, leadID)
+	row := r.pgx.QueryRow(ctx, query, leadID)
 
 	var l models.Lead
 	err := row.Scan(
-		&l.ID,
-		&l.LeadID,
-		&l.Company,
-		&l.ProjectName,
-		&l.Contact,
-		&l.Email,
-		&l.Phone,
-		&l.OfficePhone,
-		&l.OfficePhoneCountry,
-		&l.Owner,
-		&l.Industry,
-		&l.Size,
-		&l.Region,
-		&l.Source,
-		&l.Stage,
-		&l.Status,
-		&l.Sentiment,
-		&l.Priority,
-		&l.Value,
-		&l.LostReason,
-		&l.CreatedAt,
-		&l.UpdatedAt,
+		&l.ID, &l.LeadID, &l.Company, &l.ProjectName, &l.Contact,
+		&l.Email, &l.Phone, &l.OfficePhone, &l.OfficePhoneCountry, &l.Owner,
+		&l.Industry, &l.Size, &l.Region, &l.Source, &l.Stage, &l.Status,
+		&l.Sentiment, &l.Priority, &l.Value, &l.LostReason, &l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -212,6 +259,6 @@ func (r *leadRepository) UpdateLeadStatusAndStage(ctx context.Context, leadID st
 	query := `UPDATE leads 
 			  SET status = $1, stage = $2, lost_reason = $3, updated_at = NOW() 
 			  WHERE lead_id = $4 AND deleted_at IS NULL`
-	_, err := r.db.Exec(ctx, query, status, stage, lostReason, leadID)
+	_, err := r.pgx.Exec(ctx, query, status, stage, lostReason, leadID)
 	return err
 }
