@@ -2,42 +2,56 @@ package controllers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
+	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 	"crm-auth-service/services"
 )
 
+var leadIDRegex = regexp.MustCompile(`^L-\d+$`)
+
 type LeadController struct {
 	service services.LeadService
+	log     *slog.Logger
 }
 
-func NewLeadController(service services.LeadService) *LeadController {
-	return &LeadController{service: service}
+func NewLeadController(service services.LeadService, log *slog.Logger) *LeadController {
+	return &LeadController{
+		service: service,
+		log:     log,
+	}
 }
 
-func errorResponse(c *gin.Context, status int, message string) {
+func (ctrl *LeadController) errorResponse(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{
 		"success": false,
 		"message": message,
 	})
 }
 
-func handleServiceError(c *gin.Context, err error) {
+func (ctrl *LeadController) handleServiceError(c *gin.Context, err error) {
 	if errors.Is(err, services.ErrNotFound) {
-		errorResponse(c, http.StatusNotFound, "Lead not found")
+		ctrl.errorResponse(c, http.StatusNotFound, "Lead not found")
 	} else if errors.Is(err, services.ErrUnauthorized) {
-		errorResponse(c, http.StatusForbidden, "Unauthorized to access this lead")
+		ctrl.errorResponse(c, http.StatusForbidden, "Unauthorized to access this lead")
 	} else if errors.Is(err, services.ErrValidation) {
-		errorResponse(c, http.StatusBadRequest, "Validation failed")
+		ctrl.errorResponse(c, http.StatusBadRequest, "Validation failed")
 	} else if errors.Is(err, services.ErrDuplicateConflict) {
-		errorResponse(c, http.StatusConflict, "Duplicate email or company conflict")
+		ctrl.errorResponse(c, http.StatusConflict, "Duplicate email or company conflict")
 	} else {
-		errorResponse(c, http.StatusInternalServerError, "Internal server error")
+		ctrl.errorResponse(c, http.StatusInternalServerError, "Internal server error")
 	}
 }
+
+// ---------------------------------------------
+// My Endpoints (Create, Update, Delete, Activities)
+// ---------------------------------------------
 
 func (ctrl *LeadController) CreateLead(c *gin.Context) {
 	var req models.CreateLeadRequest
@@ -52,7 +66,7 @@ func (ctrl *LeadController) CreateLead(c *gin.Context) {
 
 	resp, err := ctrl.service.CreateLead(req)
 	if err != nil {
-		handleServiceError(c, err)
+		ctrl.handleServiceError(c, err)
 		return
 	}
 
@@ -64,14 +78,19 @@ func (ctrl *LeadController) CreateLead(c *gin.Context) {
 
 func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 	id := c.Param("id")
-	userName := ""
+	userEmail := ""
 	if email, exists := c.Get("email"); exists {
-		userName = email.(string)
+		userEmail = email.(string)
 	}
 
 	userRole := ""
 	if role, exists := c.Get("role"); exists {
 		userRole = role.(string)
+	}
+
+	if !leadIDRegex.MatchString(id) {
+		ctrl.errorResponse(c, http.StatusNotFound, "Lead not found")
+		return
 	}
 
 	var req models.UpdateLeadRequest
@@ -84,9 +103,9 @@ func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.UpdateLead(id, userRole, userName, req)
+	resp, err := ctrl.service.UpdateLead(id, userRole, userEmail, req)
 	if err != nil {
-		handleServiceError(c, err)
+		ctrl.handleServiceError(c, err)
 		return
 	}
 
@@ -105,7 +124,7 @@ func (ctrl *LeadController) DeleteLead(c *gin.Context) {
 
 	err := ctrl.service.DeleteLead(id, userRole)
 	if err != nil {
-		handleServiceError(c, err)
+		ctrl.handleServiceError(c, err)
 		return
 	}
 
@@ -117,9 +136,9 @@ func (ctrl *LeadController) DeleteLead(c *gin.Context) {
 
 func (ctrl *LeadController) GetLeadActivities(c *gin.Context) {
 	id := c.Param("id")
-	userName := ""
+	userEmail := ""
 	if email, exists := c.Get("email"); exists {
-		userName = email.(string)
+		userEmail = email.(string)
 	}
 
 	userRole := ""
@@ -127,19 +146,107 @@ func (ctrl *LeadController) GetLeadActivities(c *gin.Context) {
 		userRole = role.(string)
 	}
 
-	resp, err := ctrl.service.GetLeadActivities(id, userRole, userName)
+	resp, err := ctrl.service.GetLeadActivities(id, userRole, userEmail)
 	if err != nil {
-		handleServiceError(c, err)
+		ctrl.handleServiceError(c, err)
 		return
 	}
 
 	if len(resp) == 0 {
-		// return empty array per spec
 		resp = []models.ActivityResponse{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    resp,
+	})
+}
+
+// ---------------------------------------------
+// Sahil's Endpoints
+// ---------------------------------------------
+
+func (ac *LeadController) GetCurrentUsers(c *gin.Context) {
+	users, err := ac.service.GetCurrentUsers(c.Request.Context())
+	if err != nil {
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{
+		"success": true,
+		"data":    users,
+	})
+}
+
+func (ac *LeadController) GetMasterStages(c *gin.Context) {
+	stages, err := ac.service.GetMasterStages(c.Request.Context())
+	if err != nil {
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{
+		"success": true,
+		"data":    stages,
+	})
+}
+
+func (ac *LeadController) ListLeads(c *gin.Context) {
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "5")
+	search := c.Query("search")
+	owner := c.Query("owner")
+	priority := c.Query("priority")
+	stage := c.Query("stage")
+	sortBy := c.DefaultQuery("sortBy", "createdAt")
+	sortOrder := c.DefaultQuery("sortOrder", "desc")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "page must be greater than or equal to 1")
+		return
+	}
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "limit must be between 1 and 100")
+		return
+	}
+
+	leads, pagination, err := ac.service.ListLeads(c.Request.Context(), page, limit, search, owner, priority, stage, sortBy, sortOrder)
+	if err != nil {
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{
+		"success":    true,
+		"data":       leads,
+		"pagination": pagination,
+	})
+}
+
+func (ac *LeadController) GetLead(c *gin.Context) {
+	id := c.Param("id")
+
+	if !leadIDRegex.MatchString(id) {
+		helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
+		return
+	}
+
+	lead, err := ac.service.GetLead(c.Request.Context(), id)
+	if err != nil {
+		if err == helpers.ErrNotFound {
+			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
+			return
+		}
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{
+		"success": true,
+		"data":    lead,
 	})
 }

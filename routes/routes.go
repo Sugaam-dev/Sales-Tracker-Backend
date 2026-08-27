@@ -18,4 +18,10 @@ func RegisterRoutes(router *gin.Engine, authController *controllers.AuthControll
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
 	v1.RegisterLeadRoutes(apiV1, leadController, jwtManager)
 	apiV1.POST("/users", middleware.AuthMiddleware(jwtManager), authController.CreateUser)
+
+	// Lead Module routes from Sahil
+	apiV1.GET("/current_users/", middleware.AuthMiddleware(jwtManager), leadController.GetCurrentUsers)
+	apiV1.GET("/master/stages", middleware.AuthMiddleware(jwtManager), leadController.GetMasterStages)
+	apiV1.GET("/leads", middleware.AuthMiddleware(jwtManager), leadController.ListLeads)
+	apiV1.GET("/leads/:id", middleware.AuthMiddleware(jwtManager), leadController.GetLead)
 }

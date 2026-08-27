@@ -42,6 +42,7 @@ type User struct {
 	MFAMethod      *string   `gorm:"type:varchar"` // "email" | "sms"
 	SSOProvider    *string   `gorm:"type:varchar"`
 	SSOSubjectID   *string   `gorm:"type:varchar"`
+	IsActive       bool      `gorm:"not null;default:true"`
 	CreatedAt      time.Time `gorm:"not null;autoCreateTime"`
 	UpdatedAt      time.Time `gorm:"not null;autoUpdateTime"`
 }
@@ -67,6 +68,7 @@ type UserSummary struct {
 	Role           string    `json:"role"`
 	EmailVerified  bool      `json:"email_verified"`
 	MobileVerified bool      `json:"mobile_verified"`
+	IsActive       bool      `json:"is_active"`
 }
 
 // LoginSuccessResponse — normal login: no pending onboarding, MFA not enabled.

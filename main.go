@@ -80,12 +80,13 @@ func main() {
 		log,
 	)
 
-	leadRepo := repository.NewLeadRepository(gormDB)
-	leadService := services.NewLeadService(leadRepo)
-	leadController := controllers.NewLeadController(leadService)
-
 	// Dependency Injection: HTTP layer controller.
 	authController := controllers.NewAuthController(authService, log)
+
+	// Lead Module dependencies
+	leadRepo := repository.NewLeadRepository(db, gormDB)
+	leadService := services.NewLeadService(leadRepo, userRepo)
+	leadController := controllers.NewLeadController(leadService, log)
 
 	// Configure routing engine.
 	if cfg.Server.Env == "production" {

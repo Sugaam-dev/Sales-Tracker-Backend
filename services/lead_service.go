@@ -1,12 +1,16 @@
 package services
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"math"
+	"net/http"
 	"strings"
+	"time"
+	"strconv"
 
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
-
+	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 )
@@ -14,8 +18,8 @@ import (
 var (
 	ErrValidation        = errors.New("validation failed")
 	ErrDuplicateConflict = errors.New("duplicate conflict")
-	ErrNotFound          = errors.New("lead not found")
-	ErrUnauthorized      = errors.New("unauthorized action")
+	ErrNotFound          = errors.New("not found")
+	ErrUnauthorized      = errors.New("unauthorized")
 )
 
 type LeadService interface {
@@ -23,137 +27,125 @@ type LeadService interface {
 	UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error)
 	DeleteLead(leadID string, userRole string) error
 	GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error)
+
+	GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error)
+	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
+	ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
+	GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error)
 }
 
 type leadService struct {
-	repo repository.LeadRepository
+	leadRepo repository.LeadRepository
+	userRepo repository.UserRepository
 }
 
-func NewLeadService(repo repository.LeadRepository) LeadService {
-	return &leadService{repo: repo}
+func NewLeadService(leadRepo repository.LeadRepository, userRepo repository.UserRepository) LeadService {
+	return &leadService{
+		leadRepo: leadRepo,
+		userRepo: userRepo,
+	}
 }
 
-func isValidStatus(s string) bool {
-	valid := []string{"Open", "In Progress", "Won", "Lost"}
-	for _, v := range valid {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
-func isValidSentiment(s string) bool {
-	valid := []string{"Positive", "Neutral", "Negative"}
-	for _, v := range valid {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *leadService) validateMasterData(owner, stage, status, sentiment string) error {
-	if owner != "" {
-		exists, err := s.repo.CheckUserExists(owner)
-		if err != nil || !exists {
-			return ErrValidation
-		}
-	}
-	if stage != "" {
-		exists, err := s.repo.CheckStageExists(stage)
-		if err != nil || !exists {
-			return ErrValidation
-		}
-	}
-	if status != "" && !isValidStatus(status) {
-		return ErrValidation
-	}
-	if sentiment != "" && !isValidSentiment(sentiment) {
-		return ErrValidation
-	}
-	return nil
-}
+// ---------------------------------------------
+// My Methods (Create, Update, Delete, Activities)
+// ---------------------------------------------
 
 func (s *leadService) handleDBError(err error) error {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ErrNotFound
+	if err == nil {
+		return nil
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+	if strings.Contains(err.Error(), "duplicate key value violates unique constraint") || strings.Contains(err.Error(), "23505") {
 		return ErrDuplicateConflict
+	}
+	if strings.Contains(err.Error(), "record not found") {
+		return ErrNotFound
 	}
 	return err
 }
 
 func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error) {
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Email = strings.ToLower(req.Email)
 
-	if err := s.validateMasterData(req.Owner, req.Stage, req.Status, req.Sentiment); err != nil {
-		return nil, err
+	if req.Owner != "" {
+		exists, err := s.leadRepo.CheckUserExists(req.Owner)
+		if err != nil || !exists {
+			return nil, ErrValidation
+		}
+	}
+	if req.Stage != "" {
+		exists, err := s.leadRepo.CheckStageExists(req.Stage)
+		if err != nil || !exists {
+			return nil, ErrValidation
+		}
 	}
 
 	lead := &models.Lead{
 		Company:            req.Company,
-		ProjectName:        req.ProjectName,
-		Contact:            req.Contact,
-		Email:              req.Email,
-		Phone:              req.Phone,
-		OfficePhone:        req.OfficePhone,
-		OfficePhoneCountry: req.OfficePhoneCountry,
-		Owner:              req.Owner,
-		Industry:           req.Industry,
-		Size:               req.Size,
-		Region:             req.Region,
-		Source:             req.Source,
-		Stage:              req.Stage,
-		Status:             req.Status,
-		Sentiment:          req.Sentiment,
-		Priority:           req.Priority,
+		Contact:            &req.Contact,
+		Email:              &req.Email,
+		Phone:              &req.Phone,
+		OfficePhone:        &req.OfficePhone,
+		OfficePhoneCountry: &req.OfficePhoneCountry,
+		Owner:              &req.Owner,
+		Stage:              &req.Stage,
+		Status:             &req.Status,
+		Sentiment:          &req.Sentiment,
+		Priority:           &req.Priority,
+	}
+	if req.ProjectName != "" {
+		lead.ProjectName = &req.ProjectName
+	}
+	if req.Industry != "" {
+		lead.Industry = &req.Industry
+	}
+	if req.Size != "" {
+		lead.Size = &req.Size
+	}
+	if req.Region != "" {
+		lead.Region = &req.Region
+	}
+	if req.Source != "" {
+		lead.Source = &req.Source
 	}
 
-	err := s.repo.CreateLead(lead)
+	err := s.leadRepo.CreateLead(lead)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	resp := models.ToLeadResponse(*lead)
+	resp := s.mapToResponse(lead)
 	return &resp, nil
 }
 
 func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
-	lead, err := s.repo.GetLeadByLeadID(leadID)
+	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.repo.GetUserNameByEmail(userEmail)
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
 	if err != nil && userRole != models.RoleAdmin {
 		return nil, ErrUnauthorized
 	}
 
-	// KAM can only update their own leads
-	if userRole != models.RoleAdmin && lead.Owner != userName {
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
 		return nil, ErrUnauthorized
 	}
 
 	updates := make(map[string]interface{})
-	
-	ownerToCheck := ""
-	stageToCheck := ""
-	statusToCheck := ""
-	
 	if req.Owner != nil {
 		updates["owner"] = *req.Owner
-		ownerToCheck = *req.Owner
 	}
 	if req.Stage != nil {
 		updates["stage"] = *req.Stage
-		stageToCheck = *req.Stage
 	}
 	if req.Status != nil {
 		updates["status"] = *req.Status
-		statusToCheck = *req.Status
 	}
 	if req.Priority != nil {
 		updates["priority"] = *req.Priority
@@ -162,58 +154,60 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 		updates["contact"] = *req.Contact
 	}
 	if req.Email != nil {
-		email := strings.ToLower(strings.TrimSpace(*req.Email))
-		updates["email"] = email
+		updates["email"] = strings.ToLower(*req.Email)
 	}
 	if req.Phone != nil {
 		updates["phone"] = *req.Phone
 	}
+	if req.LostReason != nil {
+		updates["lost_reason"] = *req.LostReason
+	}
 	if req.Value != nil {
-		updates["value"] = *req.Value
+		parsedVal, err := strconv.ParseFloat(*req.Value, 64)
+		if err == nil {
+			updates["value"] = parsedVal
+		}
 	}
 
-	if err := s.validateMasterData(ownerToCheck, stageToCheck, statusToCheck, ""); err != nil {
-		return nil, err
-	}
-
-	err = s.repo.UpdateLead(leadID, updates)
+	err = s.leadRepo.UpdateLead(leadID, updates)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	// Fetch updated lead
-	updatedLead, err := s.repo.GetLeadByLeadID(leadID)
+	updatedLead, err := s.leadRepo.GetLeadByLeadID(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	resp := models.ToLeadResponse(*updatedLead)
+	resp := s.mapToResponse(updatedLead)
 	return &resp, nil
 }
 
 func (s *leadService) DeleteLead(leadID string, userRole string) error {
-	// Only Admin can delete leads
 	if userRole != models.RoleAdmin {
 		return ErrUnauthorized
 	}
-
-	err := s.repo.DeleteLead(leadID)
+	err := s.leadRepo.DeleteLead(leadID)
 	return s.handleDBError(err)
 }
 
 func (s *leadService) GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error) {
-	lead, err := s.repo.GetLeadActivities(leadID)
+	lead, err := s.leadRepo.GetLeadActivities(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.repo.GetUserNameByEmail(userEmail)
+	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
 	if err != nil && userRole != models.RoleAdmin {
 		return nil, ErrUnauthorized
 	}
 
-	// KAM can only view activities of their own leads
-	if userRole != models.RoleAdmin && lead.Owner != userName {
+	leadOwner := ""
+	if lead.Owner != nil {
+		leadOwner = *lead.Owner
+	}
+
+	if userRole != models.RoleAdmin && leadOwner != userName {
 		return nil, ErrUnauthorized
 	}
 
@@ -221,6 +215,106 @@ func (s *leadService) GetLeadActivities(leadID string, userRole, userEmail strin
 	for i, a := range lead.Activities {
 		resp[i] = models.ToActivityResponse(a)
 	}
-
 	return resp, nil
+}
+
+// ---------------------------------------------
+// Sahil's Methods
+// ---------------------------------------------
+
+func (s *leadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error) {
+	users, err := s.userRepo.FindActiveUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("service: get current users: %w", err)
+	}
+
+	res := make([]models.ActiveUserResponse, 0, len(users))
+	for _, u := range users {
+		res = append(res, models.ActiveUserResponse{
+			ID:       u.ID,
+			Name:     u.Name,
+			Email:    u.Email,
+			IsActive: u.IsActive,
+		})
+	}
+	return res, nil
+}
+
+func (s *leadService) GetMasterStages(ctx context.Context) ([]*models.LeadStage, error) {
+	stages, err := s.leadRepo.FindStages(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("service: get master stages: %w", err)
+	}
+	return stages, nil
+}
+
+func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error) {
+	if page < 1 {
+		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "page must be greater than or equal to 1"}
+	}
+	if limit < 1 || limit > 100 {
+		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "limit must be between 1 and 100"}
+	}
+
+	leads, total, err := s.leadRepo.FindLeads(ctx, page, limit, search, owner, priority, stage, sortBy, sortOrder)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var leadResponses []models.LeadResponse
+	for _, l := range leads {
+		leadResponses = append(leadResponses, s.mapToResponse(l))
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+	pagination := &models.PaginationMetadata{
+		Page:       page,
+		Limit:      limit,
+		Total:      total,
+		TotalPages: totalPages,
+	}
+	return leadResponses, pagination, nil
+}
+
+func (s *leadService) GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error) {
+	lead, err := s.leadRepo.FindByID(ctx, leadID)
+	if err != nil {
+		return nil, err
+	}
+	res := s.mapToResponse(lead)
+	return &res, nil
+}
+
+func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
+	var valStr *string
+	if l.Value != nil {
+		val := fmt.Sprintf("%.0f", *l.Value)
+		valStr = &val
+	}
+
+	resp := models.LeadResponse{
+		ID:                 l.LeadID,
+		Company:            l.Company,
+		ProjectName:        l.ProjectName,
+		Contact:            l.Contact,
+		Email:              l.Email,
+		Phone:              l.Phone,
+		OfficePhone:        l.OfficePhone,
+		OfficePhoneCountry: l.OfficePhoneCountry,
+		Owner:              l.Owner,
+		Industry:           l.Industry,
+		Size:               l.Size,
+		Region:             l.Region,
+		Source:             l.Source,
+		Stage:              l.Stage,
+		Status:             l.Status,
+		Sentiment:          l.Sentiment,
+		Priority:           l.Priority,
+		Value:              valStr,
+		LostReason:         l.LostReason,
+		CreatedAt:          l.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
+	}
+	return resp
 }
