@@ -238,9 +238,11 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE TABLE IF NOT EXISTS lead_stages (
 			id INT PRIMARY KEY,
 			name VARCHAR NOT NULL,
+			status VARCHAR NOT NULL DEFAULT '',
 			sort_order INT NOT NULL,
 			is_active BOOLEAN NOT NULL DEFAULT TRUE
 		)`,
+		`ALTER TABLE lead_stages ADD COLUMN IF NOT EXISTS status VARCHAR NOT NULL DEFAULT ''`,
 
 		// Lead ID Sequence
 		`CREATE SEQUENCE IF NOT EXISTS lead_id_seq START WITH 1`,
@@ -266,10 +268,12 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			sentiment VARCHAR,
 			priority VARCHAR,
 			value NUMERIC(15, 2),
+			lost_reason VARCHAR,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP WITH TIME ZONE
 		)`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason VARCHAR`,
 
 		// Leads Constraints / Indexes
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_lower ON leads (LOWER(company))`,
@@ -287,17 +291,19 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
 
-		// Seed Lead Stages
-		`INSERT INTO lead_stages (id, name, sort_order, is_active) VALUES
-			(1, 'Prospecting', 1, true),
-			(2, 'Qualification', 2, true),
-			(3, 'Needs Analysis', 3, true),
-			(4, 'Proposal', 4, true),
-			(5, 'Negotiation', 5, true),
-			(6, 'Closed Won', 6, true),
-			(7, 'Closed Lost', 7, true)
+		// Seed Lead Stages (8 stages)
+		`INSERT INTO lead_stages (id, name, status, sort_order, is_active) VALUES
+			(1, 'Prospecting', 'Open', 1, true),
+			(2, 'Qualification', 'New', 2, true),
+			(3, 'Initial Discussion', 'Contacted', 3, true),
+			(4, 'Needs Analysis', 'Analysis', 4, true),
+			(5, 'Proposal', 'Interested', 5, true),
+			(6, 'Negotiation', 'Negotiation', 6, true),
+			(7, 'Closed Won', 'Won', 7, true),
+			(8, 'Closed Lost', 'Lost', 8, true)
 			ON CONFLICT (id) DO UPDATE SET
 				name = EXCLUDED.name,
+				status = EXCLUDED.status,
 				sort_order = EXCLUDED.sort_order,
 				is_active = EXCLUDED.is_active`,
 	}

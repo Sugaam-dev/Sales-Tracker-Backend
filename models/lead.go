@@ -9,6 +9,7 @@ import (
 type LeadStage struct {
 	ID        int    `json:"id" gorm:"primaryKey"`
 	Name      string `json:"name" gorm:"type:varchar;not null"`
+	Status    string `json:"status" gorm:"type:varchar;not null"`
 	SortOrder int    `json:"sortOrder" gorm:"type:int;not null"`
 	IsActive  bool   `json:"isActive" gorm:"not null;default:true"`
 }
@@ -35,6 +36,7 @@ type Lead struct {
 	Sentiment          *string    `json:"sentiment" gorm:"type:varchar"`
 	Priority           *string    `json:"priority" gorm:"type:varchar"`
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
+	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
 	DeletedAt          *time.Time `json:"deletedAt,omitempty" gorm:"index"`
@@ -68,6 +70,7 @@ type LeadResponse struct {
 	Sentiment          *string    `json:"sentiment,omitempty"`
 	Priority           *string    `json:"priority,omitempty"`
 	Value              *string    `json:"value,omitempty"`
+	LostReason         *string    `json:"lostReason,omitempty"`
 	CreatedAt          string     `json:"createdAt"`
 	UpdatedAt          string     `json:"updatedAt"`
 }
@@ -83,4 +86,10 @@ type LeadListResponse struct {
 	Success    bool           `json:"success"`
 	Data       []LeadResponse `json:"data"`
 	Pagination *PaginationMetadata `json:"pagination,omitempty"`
+}
+
+type UpdateLeadRequest struct {
+	Status     *string `json:"status"`
+	Stage      *string `json:"stage"`
+	LostReason *string `json:"lostReason"`
 }

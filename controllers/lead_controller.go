@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"crm-auth-service/helpers"
+	"crm-auth-service/models"
 	"crm-auth-service/services"
 )
 
@@ -97,6 +98,37 @@ func (ac *LeadController) GetLead(c *gin.Context) {
 	}
 
 	lead, err := ac.leadService.GetLead(c.Request.Context(), id)
+	if err != nil {
+		if err == helpers.ErrNotFound {
+			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
+			return
+		}
+		helpers.RespondError(c, err, ac.log)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, gin.H{
+		"success": true,
+		"data":    lead,
+	})
+}
+
+func (ac *LeadController) UpdateLead(c *gin.Context) {
+	id := c.Param("id")
+
+	// Validate public Lead ID format (L-0001)
+	if !leadIDRegex.MatchString(id) {
+		helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
+		return
+	}
+
+	var req models.UpdateLeadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	lead, err := ac.leadService.UpdateLead(c.Request.Context(), id, req)
 	if err != nil {
 		if err == helpers.ErrNotFound {
 			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")

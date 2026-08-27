@@ -131,6 +131,86 @@ func (s *LeadService) GetLead(ctx context.Context, leadID string) (*models.LeadR
 	return &res, nil
 }
 
+func (s *LeadService) UpdateLead(ctx context.Context, leadID string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
+	lead, err := s.leadRepo.FindByID(ctx, leadID)
+	if err != nil {
+		return nil, err
+	}
+
+	stages, err := s.leadRepo.FindStages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var finalStatus string
+	if req.Status != nil {
+		finalStatus = *req.Status
+	} else if lead.Status != nil {
+		finalStatus = *lead.Status
+	}
+
+	// Resolve corresponding stage for finalStatus from db mapping
+	var mappedStageName string
+	for _, st := range stages {
+		if strings.EqualFold(st.Status, finalStatus) {
+			mappedStageName = st.Name
+			break
+		}
+	}
+	if mappedStageName == "" {
+		return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "invalid status value"}
+	}
+
+	var finalStage string
+	if req.Stage != nil {
+		finalStage = *req.Stage
+	} else if req.Status != nil {
+		finalStage = mappedStageName
+	} else if lead.Stage != nil {
+		finalStage = *lead.Stage
+	}
+
+	// Enforce consistency between Status and Stage
+	if !strings.EqualFold(finalStage, mappedStageName) {
+		return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: fmt.Sprintf("inconsistent status and stage combination: status %s maps to stage %s", finalStatus, mappedStageName)}
+	}
+
+	// Lost reason validation
+	if strings.EqualFold(finalStatus, "Lost") {
+		var targetLostReason string
+		if req.LostReason != nil {
+			targetLostReason = *req.LostReason
+		} else if lead.LostReason != nil {
+			targetLostReason = *lead.LostReason
+		}
+		if strings.TrimSpace(targetLostReason) == "" {
+			return nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "lostReason is mandatory when status is Lost"}
+		}
+	}
+
+	var finalLostReason *string
+	if req.LostReason != nil {
+		finalLostReason = req.LostReason
+	} else {
+		finalLostReason = lead.LostReason
+	}
+
+	// Perform atomic database update
+	err = s.leadRepo.UpdateLeadStatusAndStage(ctx, leadID, finalStatus, finalStage, finalLostReason)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch updated lead
+	updatedLead, err := s.leadRepo.FindByID(ctx, leadID)
+	if err != nil {
+		return nil, err
+	}
+
+	res := s.mapToResponse(updatedLead)
+	return &res, nil
+}
+
 func (s *LeadService) mapToResponse(l *models.Lead) models.LeadResponse {
 	var valStr *string
 	if l.Value != nil {
@@ -157,6 +237,7 @@ func (s *LeadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		Sentiment:          l.Sentiment,
 		Priority:           l.Priority,
 		Value:              valStr,
+		LostReason:         l.LostReason,
 		CreatedAt:          l.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
 	}

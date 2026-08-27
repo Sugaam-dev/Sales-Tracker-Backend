@@ -55,11 +55,11 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 		t.Errorf("lead_id_seq sequence does not exist: %v", err)
 	}
 
-	// 3. Verify stage seed data has exactly 7 rows
+	// 3. Verify stage seed data has exactly 8 rows
 	var stageCount int
 	err = pool.QueryRow(ctx, "SELECT COUNT(*) FROM lead_stages").Scan(&stageCount)
-	if err != nil || stageCount != 7 {
-		t.Errorf("Expected 7 stages, got %d (err: %v)", stageCount, err)
+	if err != nil || stageCount != 8 {
+		t.Errorf("Expected 8 stages, got %d (err: %v)", stageCount, err)
 	}
 
 	// 4. Verify Idempotency of migrations (run connection/migration again)
@@ -70,8 +70,8 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	defer pool2.Close()
 
 	err = pool2.QueryRow(ctx, "SELECT COUNT(*) FROM lead_stages").Scan(&stageCount)
-	if err != nil || stageCount != 7 {
-		t.Errorf("Expected exactly 7 stages after second migration run, got %d (err: %v)", stageCount, err)
+	if err != nil || stageCount != 8 {
+		t.Errorf("Expected exactly 8 stages after second migration run, got %d (err: %v)", stageCount, err)
 	}
 
 	// Initialize repositories and service
@@ -150,13 +150,30 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMasterStages failed: %v", err)
 	}
-	if len(stages) != 7 {
-		t.Errorf("Expected 7 stages, got %d", len(stages))
+	if len(stages) != 8 {
+		t.Errorf("Expected 8 stages, got %d", len(stages))
 	}
-	// Verify sorting order
+	// Verify sorting order and status mapping
+	expectedMappings := map[string]string{
+		"Prospecting":        "Open",
+		"Qualification":      "New",
+		"Initial Discussion": "Contacted",
+		"Needs Analysis":     "Analysis",
+		"Proposal":           "Interested",
+		"Negotiation":        "Negotiation",
+		"Closed Won":         "Won",
+		"Closed Lost":        "Lost",
+	}
+
 	for idx, s := range stages {
 		if idx > 0 && s.SortOrder < stages[idx-1].SortOrder {
 			t.Error("Stages are not sorted by sort_order ASC")
+		}
+		expectedStatus, exists := expectedMappings[s.Name]
+		if !exists {
+			t.Errorf("Unexpected stage name: %s", s.Name)
+		} else if s.Status != expectedStatus {
+			t.Errorf("Expected stage %s to map to status %s, got %s", s.Name, expectedStatus, s.Status)
 		}
 	}
 
@@ -253,6 +270,124 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	if err != helpers.ErrNotFound {
 		t.Errorf("Expected ErrNotFound for soft-deleted lead, got %v", err)
 	}
+}
+
+func TestLeadLifecycleUpdate(t *testing.T) {
+	cfg, err := conf.LoadConfig()
+	if err != nil {
+		t.Skip("Skipping integration test; config not loaded or database credentials not found in env")
+		return
+	}
+
+	log := helpers.NewLogger(cfg.Server.Env)
+	pool, err := conf.ConnectDB(cfg.DB, log)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	ctx := context.Background()
+	userRepo := repository.NewUserRepository(pool)
+	leadRepo := repository.NewLeadRepository(pool)
+	leadService := NewLeadService(leadRepo, userRepo)
+
+	// Clean up and seed one lead for status testing
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id = 'L-9999'")
+	
+	_, err = pool.Exec(ctx, `INSERT INTO leads (lead_id, company, contact, priority, stage, status, value) VALUES
+		('L-9999', 'Lifecycle Corp', 'Test Contact', 'High', 'Prospecting', 'Open', 50000.0)`)
+	if err != nil {
+		t.Fatalf("Failed to seed lead L-9999: %v", err)
+	}
+
+	// 1. Test status mapping update (Open -> Prospecting)
+	res, err := leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Open"),
+	})
+	if err != nil || res.Stage == nil || *res.Stage != "Prospecting" {
+		t.Errorf("Expected Stage Prospecting for Open status, got %v (err: %v)", res, err)
+	}
+
+	// 2. Test status mapping update (New -> Qualification)
+	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("New"),
+	})
+	if err != nil || res.Stage == nil || *res.Stage != "Qualification" {
+		t.Errorf("Expected Stage Qualification for New status, got %v (err: %v)", res, err)
+	}
+
+	// 3. Test backward progression (New -> Open)
+	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Open"),
+	})
+	if err != nil || res.Status == nil || *res.Status != "Open" || res.Stage == nil || *res.Stage != "Prospecting" {
+		t.Errorf("Backward movement to Open failed, got %+v (err: %v)", res, err)
+	}
+
+	// 4. Test invalid status-stage combination
+	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Won"),
+		Stage:  strPtr("Prospecting"),
+	})
+	if err == nil {
+		t.Error("Expected error for inconsistent status-stage combination, got nil")
+	}
+
+	// 5. Test Lost Reason validation (missing reason)
+	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Lost"),
+	})
+	if err == nil {
+		t.Error("Expected error for Lost status without lostReason, got nil")
+	}
+
+	// 6. Test Lost Reason validation (empty spaces)
+	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status:     strPtr("Lost"),
+		LostReason: strPtr("   "),
+	})
+	if err == nil {
+		t.Error("Expected error for Lost status with empty/whitespace lostReason, got nil")
+	}
+
+	// 7. Test Lost Reason valid submit
+	reason := "Pricing too high compared to competitors"
+	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status:     strPtr("Lost"),
+		LostReason: &reason,
+	})
+	if err != nil || res.Status == nil || *res.Status != "Lost" || res.Stage == nil || *res.Stage != "Closed Lost" || res.LostReason == nil || *res.LostReason != reason {
+		t.Errorf("Expected success for Lost with reason, got %+v (err: %v)", res, err)
+	}
+
+	// 8. Test Lost Reason retention when moving away from Lost status
+	res, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Interested"),
+	})
+	if err != nil || res.Status == nil || *res.Status != "Interested" || res.Stage == nil || *res.Stage != "Proposal" || res.LostReason == nil || *res.LostReason != reason {
+		t.Errorf("Expected lostReason to be retained, got %+v (err: %v)", res, err)
+	}
+
+	// 9. Test Atomicity: Ensure invalid updates do not modify the lead partially in database
+	_, err = leadService.UpdateLead(ctx, "L-9999", models.UpdateLeadRequest{
+		Status: strPtr("Won"),
+		Stage:  strPtr("Prospecting"), // Inconsistent stage
+	})
+	if err == nil {
+		t.Error("Expected error, but update succeeded")
+	}
+
+	// Fetch from DB to confirm lead is still Interested / Proposal
+	current, err := leadRepo.FindByID(ctx, "L-9999")
+	if err != nil {
+		t.Fatalf("FindByID failed: %v", err)
+	}
+	if current.Status == nil || *current.Status != "Interested" || current.Stage == nil || *current.Stage != "Proposal" {
+		t.Errorf("Database updated partially! Expected (Interested, Proposal), got (%v, %v)", current.Status, current.Stage)
+	}
+
+	// Cleanup
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id = 'L-9999'")
 }
 
 func TestMain(m *testing.M) {

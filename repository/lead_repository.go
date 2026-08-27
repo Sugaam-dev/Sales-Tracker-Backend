@@ -17,6 +17,7 @@ type LeadRepository interface {
 	FindStages(ctx context.Context) ([]*models.LeadStage, error)
 	FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
 	FindByID(ctx context.Context, leadID string) (*models.Lead, error)
+	UpdateLeadStatusAndStage(ctx context.Context, leadID string, status, stage string, lostReason *string) error
 }
 
 type leadRepository struct {
@@ -28,7 +29,7 @@ func NewLeadRepository(db *pgxpool.Pool) LeadRepository {
 }
 
 func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, error) {
-	query := "SELECT id, name, sort_order, is_active FROM lead_stages WHERE is_active = TRUE ORDER BY sort_order ASC"
+	query := "SELECT id, name, status, sort_order, is_active FROM lead_stages WHERE is_active = TRUE ORDER BY sort_order ASC"
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("repo: find stages: %w", err)
@@ -38,7 +39,7 @@ func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, e
 	var stages []*models.LeadStage
 	for rows.Next() {
 		var s models.LeadStage
-		if err := rows.Scan(&s.ID, &s.Name, &s.SortOrder, &s.IsActive); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Status, &s.SortOrder, &s.IsActive); err != nil {
 			return nil, err
 		}
 		stages = append(stages, &s)
@@ -118,7 +119,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	limitOffsetSQL := fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", orderByCol, dir, argCount, argCount+1)
 	args = append(args, limit, offset)
 
-	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, created_at, updated_at 
+	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, created_at, updated_at 
 				  FROM leads` + whereSQL + limitOffsetSQL
 
 	rows, err := r.db.Query(ctx, dataQuery, args...)
@@ -150,6 +151,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 			&l.Sentiment,
 			&l.Priority,
 			&l.Value,
+			&l.LostReason,
 			&l.CreatedAt,
 			&l.UpdatedAt,
 		)
@@ -167,7 +169,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 }
 
 func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.Lead, error) {
-	query := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, created_at, updated_at 
+	query := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, created_at, updated_at 
 			  FROM leads 
 			  WHERE lead_id = $1 AND deleted_at IS NULL`
 	row := r.db.QueryRow(ctx, query, leadID)
@@ -193,6 +195,7 @@ func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.L
 		&l.Sentiment,
 		&l.Priority,
 		&l.Value,
+		&l.LostReason,
 		&l.CreatedAt,
 		&l.UpdatedAt,
 	)
@@ -203,4 +206,12 @@ func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.L
 		return nil, err
 	}
 	return &l, nil
+}
+
+func (r *leadRepository) UpdateLeadStatusAndStage(ctx context.Context, leadID string, status, stage string, lostReason *string) error {
+	query := `UPDATE leads 
+			  SET status = $1, stage = $2, lost_reason = $3, updated_at = NOW() 
+			  WHERE lead_id = $4 AND deleted_at IS NULL`
+	_, err := r.db.Exec(ctx, query, status, stage, lostReason, leadID)
+	return err
 }
