@@ -21,6 +21,7 @@ type Lead struct {
 	LeadID             string     `json:"leadId" gorm:"type:varchar;uniqueIndex;not null"`
 	Company            string     `json:"company" gorm:"type:varchar;not null"`
 	ProjectName        *string    `json:"projectName" gorm:"type:varchar"`
+	Designation        *string    `json:"designation" gorm:"type:varchar"`
 	Contact            *string    `json:"contact" gorm:"type:varchar"`
 	Email              *string    `json:"email" gorm:"type:varchar;uniqueIndex"`
 	Phone              *string    `json:"phone" gorm:"type:varchar"`
@@ -37,6 +38,7 @@ type Lead struct {
 	Priority           *string    `json:"priority" gorm:"type:varchar"`
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
 	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
+	BestTime           *string    `json:"bestTime" gorm:"column:best_time;type:varchar"`
 	Activities         []Activity `json:"activities,omitempty" gorm:"foreignKey:LeadID;references:LeadID"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
@@ -69,6 +71,7 @@ type LeadResponse struct {
 	ID                 string     `json:"id"`
 	Company            string     `json:"company"`
 	ProjectName        *string    `json:"projectName,omitempty"`
+	Designation        *string    `json:"designation,omitempty"`
 	Contact            *string    `json:"contact,omitempty"`
 	Email              *string    `json:"email,omitempty"`
 	Phone              *string    `json:"phone,omitempty"`
@@ -85,6 +88,7 @@ type LeadResponse struct {
 	Priority           *string    `json:"priority,omitempty"`
 	Value              *string    `json:"value,omitempty"`
 	LostReason         *string    `json:"lostReason,omitempty"`
+	BestTime           *string    `json:"bestTime,omitempty"`
 	CreatedAt          string     `json:"createdAt"`
 	UpdatedAt          string     `json:"updatedAt"`
 }
@@ -103,13 +107,24 @@ type LeadListResponse struct {
 }
 
 type UpdateLeadRequest struct {
-	Owner      *string `json:"owner,omitempty"`
-	Stage      *string `json:"stage,omitempty"`
-	Status     *string `json:"status,omitempty"`
-	Priority   *string `json:"priority,omitempty"`
-	Contact    *string `json:"contact,omitempty"`
-	Email      *string `json:"email,omitempty"`
-	Phone      *string `json:"phone,omitempty"`
-	Value      *string `json:"value,omitempty"`
-	LostReason *string `json:"lostReason,omitempty"`
+	Owner              *string `json:"owner,omitempty"`
+	Stage              *string `json:"stage,omitempty"`
+	Status             *string `json:"status,omitempty"`
+	Priority           *string `json:"priority,omitempty"`
+	Contact            *string `json:"contact,omitempty"`
+	Email              *string `json:"email,omitempty"`
+	Phone              *string `json:"phone,omitempty"`
+	Value              *string `json:"value,omitempty"`
+	LostReason         *string `json:"lostReason,omitempty"`
+	BestTime           *string `json:"bestTime,omitempty"`
+	Company            *string `json:"company,omitempty"`
+	ProjectName        *string `json:"projectName,omitempty"`
+	Designation        *string `json:"designation,omitempty"`
+	Industry           *string `json:"industry,omitempty"`
+	Size               *string `json:"size,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	Source             *string `json:"source,omitempty"`
+	Sentiment          *string `json:"sentiment,omitempty"`
+	OfficePhone        *string `json:"officePhone,omitempty"`
+	OfficePhoneCountry *string `json:"officePhoneCountry,omitempty"`
 }

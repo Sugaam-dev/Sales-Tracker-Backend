@@ -17,6 +17,10 @@ type CreateLeadRequest struct {
 	Status             string `json:"status" binding:"required"`
 	Sentiment          string `json:"sentiment" binding:"required"`
 	Priority           string `json:"priority" binding:"required,oneof=Low Normal High Urgent"`
+	Designation        string `json:"designation"`
+	BestTime           string `json:"bestTime"`
+	Value              string `json:"value"`
+	LostReason         string `json:"lostReason"`
 }
 
 type ActivityResponse struct {
