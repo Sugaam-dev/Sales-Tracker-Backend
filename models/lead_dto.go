@@ -1,26 +1,38 @@
 package models
 
 type CreateLeadRequest struct {
-	Company            string `json:"company" binding:"required"`
-	ProjectName        string `json:"projectName"`
-	Contact            string `json:"contact" binding:"required"`
-	Email              string `json:"email" binding:"required,email"`
-	Phone              string `json:"phone" binding:"required,len=10,numeric"`
-	OfficePhone        string `json:"officePhone" binding:"required,len=10,numeric"`
-	OfficePhoneCountry string `json:"officePhoneCountry"`
-	Owner              string `json:"owner" binding:"required"`
-	Industry           string `json:"industry"`
-	Size               string `json:"size"`
-	Region             string `json:"region"`
-	Source             string `json:"source"`
-	Stage              string `json:"stage" binding:"required"`
-	Status             string `json:"status" binding:"required"`
-	Sentiment          string `json:"sentiment" binding:"required"`
-	Priority           string `json:"priority" binding:"required,oneof=Low Normal High Urgent"`
-	Designation        string `json:"designation"`
-	BestTime           string `json:"bestTime"`
-	Value              string `json:"value"`
-	LostReason         string `json:"lostReason"`
+	Company                  string `json:"company" binding:"required"`
+	ProjectName              string `json:"projectName"`
+	Contact                  string `json:"contact" binding:"required"`
+	Email                    string `json:"email" binding:"required,email"`
+	Phone                    string `json:"phone" binding:"required,len=10,numeric"`
+	OfficePhone              string `json:"officePhone" binding:"required,len=10,numeric"`
+	OfficePhoneCountry       string `json:"officePhoneCountry"`
+	Owner                    string `json:"owner" binding:"required"`
+	Industry                 string `json:"industry"`
+	Size                     string `json:"size"`
+	Region                   string `json:"region"`
+	Source                   string `json:"source"`
+	Stage                    string `json:"stage" binding:"required"`
+	Status                   string `json:"status" binding:"required"`
+	Sentiment                string `json:"sentiment" binding:"required"`
+	Priority                 string `json:"priority" binding:"required,oneof=Low Normal High Urgent"`
+	BestTime                 string `json:"bestTime"`
+	Value                    string `json:"value"`
+	LostReason               string `json:"lostReason"`
+	LifecycleTemplate        string `json:"lifecycleTemplate"`
+	KamName                  string `json:"kamName"`
+	Designation              string `json:"designation"`
+	BestTimeToConnect        string `json:"bestTimeToConnect"`
+	AlternatePhone           string `json:"alternatePhone"`
+	AlternatePhoneCountry    string `json:"alternatePhoneCountry"`
+	LinkedinProfileUrl       string `json:"linkedinProfileUrl"`
+	LinkedinCompanyPageUrl   string `json:"linkedinCompanyPageUrl"`
+	EstimatedRequirementDate string `json:"estimatedRequirementDate"`
+	LastContactDate          string `json:"lastContactDate"`
+	NextFollowUp             string `json:"nextFollowUp"`
+	BasicRequirements        string `json:"basicRequirements"`
+	Notes                    string `json:"notes"`
 }
 
 type ActivityResponse struct {

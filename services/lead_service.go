@@ -128,6 +128,88 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		}
 	}
 
+	if req.KamName == "" {
+		return nil, ErrValidation
+	}
+	if req.BasicRequirements == "" {
+		return nil, ErrValidation
+	}
+
+	if req.AlternatePhone != "" {
+		phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)
+		if !phoneRegex.MatchString(req.AlternatePhone) {
+			return nil, ErrValidation
+		}
+	}
+
+	var estReqDate *time.Time
+	if req.EstimatedRequirementDate != "" {
+		t, err := time.Parse("2006-01-02", req.EstimatedRequirementDate)
+		if err != nil {
+			return nil, ErrValidation
+		}
+		estReqDate = &t
+	}
+
+	var lastContact *time.Time
+	if req.LastContactDate != "" {
+		t, err := time.Parse(time.RFC3339, req.LastContactDate)
+		if err != nil {
+			t2, err2 := time.Parse("2006-01-02", req.LastContactDate)
+			if err2 != nil {
+				return nil, ErrValidation
+			}
+			lastContact = &t2
+		} else {
+			lastContact = &t
+		}
+	}
+
+	var nextFollowUp *time.Time
+	if req.NextFollowUp != "" {
+		t, err := time.Parse(time.RFC3339, req.NextFollowUp)
+		if err != nil {
+			t2, err2 := time.Parse("2006-01-02", req.NextFollowUp)
+			if err2 != nil {
+				return nil, ErrValidation
+			}
+			nextFollowUp = &t2
+		} else {
+			nextFollowUp = &t
+		}
+	}
+
+	if req.LifecycleTemplate != "" {
+		lead.LifecycleTemplate = &req.LifecycleTemplate
+	}
+	if req.KamName != "" {
+		lead.KamName = &req.KamName
+	}
+	if req.BestTimeToConnect != "" {
+		lead.BestTimeToConnect = &req.BestTimeToConnect
+	}
+	if req.AlternatePhone != "" {
+		lead.AlternatePhone = &req.AlternatePhone
+	}
+	if req.AlternatePhoneCountry != "" {
+		lead.AlternatePhoneCountry = &req.AlternatePhoneCountry
+	}
+	if req.LinkedinProfileUrl != "" {
+		lead.LinkedinProfileURL = &req.LinkedinProfileUrl
+	}
+	if req.LinkedinCompanyPageUrl != "" {
+		lead.LinkedinCompanyPageURL = &req.LinkedinCompanyPageUrl
+	}
+	lead.EstimatedRequirementDate = estReqDate
+	lead.LastContactDate = lastContact
+	lead.NextFollowUp = nextFollowUp
+	if req.BasicRequirements != "" {
+		lead.BasicRequirements = &req.BasicRequirements
+	}
+	if req.Notes != "" {
+		lead.Notes = &req.Notes
+	}
+
 	err := s.leadRepo.CreateLead(lead)
 	if err != nil {
 		return nil, s.handleDBError(err)
@@ -233,6 +315,20 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 		}
 	}
 
+	if req.KamName != nil && *req.KamName == "" {
+		return nil, ErrValidation
+	}
+	if req.BasicRequirements != nil && *req.BasicRequirements == "" {
+		return nil, ErrValidation
+	}
+
+	if req.AlternatePhone != nil && *req.AlternatePhone != "" {
+		phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)
+		if !phoneRegex.MatchString(*req.AlternatePhone) {
+			return nil, ErrValidation
+		}
+	}
+
 	updates := make(map[string]interface{})
 	if req.Owner != nil {
 		updates["owner"] = *req.Owner
@@ -296,6 +392,81 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	}
 	if req.BestTime != nil {
 		updates["best_time"] = *req.BestTime
+	}
+
+	if req.LifecycleTemplate != nil {
+		updates["lifecycle_template"] = *req.LifecycleTemplate
+	}
+	if req.KamName != nil {
+		updates["kam_name"] = *req.KamName
+	}
+	if req.BestTimeToConnect != nil {
+		updates["best_time_to_connect"] = *req.BestTimeToConnect
+	}
+	if req.AlternatePhone != nil {
+		updates["alternate_phone"] = *req.AlternatePhone
+	}
+	if req.AlternatePhoneCountry != nil {
+		updates["alternate_phone_country"] = *req.AlternatePhoneCountry
+	}
+	if req.LinkedinProfileURL != nil {
+		updates["linkedin_profile_url"] = *req.LinkedinProfileURL
+	}
+	if req.LinkedinCompanyPageURL != nil {
+		updates["linkedin_company_page_url"] = *req.LinkedinCompanyPageURL
+	}
+
+	if req.EstimatedRequirementDate != nil {
+		if *req.EstimatedRequirementDate != "" {
+			t, err := time.Parse("2006-01-02", *req.EstimatedRequirementDate)
+			if err != nil {
+				return nil, ErrValidation
+			}
+			updates["estimated_requirement_date"] = t
+		} else {
+			updates["estimated_requirement_date"] = nil
+		}
+	}
+
+	if req.LastContactDate != nil {
+		if *req.LastContactDate != "" {
+			t, err := time.Parse(time.RFC3339, *req.LastContactDate)
+			if err != nil {
+				t2, err2 := time.Parse("2006-01-02", *req.LastContactDate)
+				if err2 != nil {
+					return nil, ErrValidation
+				}
+				updates["last_contact_date"] = t2
+			} else {
+				updates["last_contact_date"] = t
+			}
+		} else {
+			updates["last_contact_date"] = nil
+		}
+	}
+
+	if req.NextFollowUp != nil {
+		if *req.NextFollowUp != "" {
+			t, err := time.Parse(time.RFC3339, *req.NextFollowUp)
+			if err != nil {
+				t2, err2 := time.Parse("2006-01-02", *req.NextFollowUp)
+				if err2 != nil {
+					return nil, ErrValidation
+				}
+				updates["next_follow_up"] = t2
+			} else {
+				updates["next_follow_up"] = t
+			}
+		} else {
+			updates["next_follow_up"] = nil
+		}
+	}
+
+	if req.BasicRequirements != nil {
+		updates["basic_requirements"] = *req.BasicRequirements
+	}
+	if req.Notes != nil {
+		updates["notes"] = *req.Notes
 	}
 
 	err = s.leadRepo.UpdateLead(leadID, updates)
@@ -429,30 +600,58 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		valStr = &val
 	}
 
+	var estReqDate *string
+	if l.EstimatedRequirementDate != nil {
+		s := l.EstimatedRequirementDate.Format("2006-01-02")
+		estReqDate = &s
+	}
+	var lastContDate *string
+	if l.LastContactDate != nil {
+		s := l.LastContactDate.Format(time.RFC3339)
+		lastContDate = &s
+	}
+	var nextFollow *string
+	if l.NextFollowUp != nil {
+		s := l.NextFollowUp.Format(time.RFC3339)
+		nextFollow = &s
+	}
+
 	resp := models.LeadResponse{
-		ID:                 l.LeadID,
-		Company:            l.Company,
-		ProjectName:        l.ProjectName,
-		Designation:        l.Designation,
-		Contact:            l.Contact,
-		Email:              l.Email,
-		Phone:              l.Phone,
-		OfficePhone:        l.OfficePhone,
-		OfficePhoneCountry: l.OfficePhoneCountry,
-		Owner:              l.Owner,
-		Industry:           l.Industry,
-		Size:               l.Size,
-		Region:             l.Region,
-		Source:             l.Source,
-		Stage:              l.Stage,
-		Status:             l.Status,
-		Sentiment:          l.Sentiment,
-		Priority:           l.Priority,
-		Value:              valStr,
-		LostReason:         l.LostReason,
-		BestTime:           l.BestTime,
-		CreatedAt:          l.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
+		ID:                       l.LeadID,
+		Company:                  l.Company,
+		ProjectName:              l.ProjectName,
+		Contact:                  l.Contact,
+		Email:                    l.Email,
+		Phone:                    l.Phone,
+		OfficePhone:              l.OfficePhone,
+		OfficePhoneCountry:       l.OfficePhoneCountry,
+		Owner:                    l.Owner,
+		Industry:                 l.Industry,
+		Size:                     l.Size,
+		Region:                   l.Region,
+		Source:                   l.Source,
+		Stage:                    l.Stage,
+		Status:                   l.Status,
+		Sentiment:                l.Sentiment,
+		Priority:                 l.Priority,
+		Value:                    valStr,
+		LostReason:               l.LostReason,
+		BestTime:                 l.BestTime,
+		LifecycleTemplate:        l.LifecycleTemplate,
+		KamName:                  l.KamName,
+		Designation:              l.Designation,
+		BestTimeToConnect:        l.BestTimeToConnect,
+		AlternatePhone:           l.AlternatePhone,
+		AlternatePhoneCountry:    l.AlternatePhoneCountry,
+		LinkedinProfileURL:       l.LinkedinProfileURL,
+		LinkedinCompanyPageURL:   l.LinkedinCompanyPageURL,
+		EstimatedRequirementDate: estReqDate,
+		LastContactDate:          lastContDate,
+		NextFollowUp:             nextFollow,
+		BasicRequirements:        l.BasicRequirements,
+		Notes:                    l.Notes,
+		CreatedAt:                l.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:                l.UpdatedAt.Format(time.RFC3339),
 	}
 	return resp
 }
@@ -637,6 +836,60 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 			errorsMap["priority"] = "Priority must be Low, Normal, High, or Urgent"
 		}
 
+		if item.KamName == "" {
+			errorsMap["kamName"] = "KAM Name is required"
+		}
+		if item.BasicRequirements == "" {
+			errorsMap["basicRequirements"] = "Basic Requirements is required"
+		}
+
+		if item.AlternatePhone != "" {
+			phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)
+			if !phoneRegex.MatchString(item.AlternatePhone) {
+				errorsMap["alternatePhone"] = "Alternate phone must contain exactly 10 digits"
+			}
+		}
+
+		var estReqDate *time.Time
+		if item.EstimatedRequirementDate != "" {
+			t, err := time.Parse("2006-01-02", item.EstimatedRequirementDate)
+			if err != nil {
+				errorsMap["estimatedRequirementDate"] = "Invalid date format, use YYYY-MM-DD"
+			} else {
+				estReqDate = &t
+			}
+		}
+
+		var lastContact *time.Time
+		if item.LastContactDate != "" {
+			t, err := time.Parse(time.RFC3339, item.LastContactDate)
+			if err != nil {
+				t2, err2 := time.Parse("2006-01-02", item.LastContactDate)
+				if err2 != nil {
+					errorsMap["lastContactDate"] = "Invalid date-time format"
+				} else {
+					lastContact = &t2
+				}
+			} else {
+				lastContact = &t
+			}
+		}
+
+		var nextFollowUp *time.Time
+		if item.NextFollowUp != "" {
+			t, err := time.Parse(time.RFC3339, item.NextFollowUp)
+			if err != nil {
+				t2, err2 := time.Parse("2006-01-02", item.NextFollowUp)
+				if err2 != nil {
+					errorsMap["nextFollowUp"] = "Invalid date-time format"
+				} else {
+					nextFollowUp = &t2
+				}
+			} else {
+				nextFollowUp = &t
+			}
+		}
+
 		if emailTrimmed != "" && errorsMap["email"] == "" {
 			if batchEmails[emailTrimmed] {
 				errorsMap["email"] = "duplicate email within request"
@@ -701,6 +954,40 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 		}
 		if item.Source != "" {
 			lead.Source = &item.Source
+		}
+
+		if item.LifecycleTemplate != "" {
+			lead.LifecycleTemplate = &item.LifecycleTemplate
+		}
+		if item.KamName != "" {
+			lead.KamName = &item.KamName
+		}
+		if item.Designation != "" {
+			lead.Designation = &item.Designation
+		}
+		if item.BestTimeToConnect != "" {
+			lead.BestTimeToConnect = &item.BestTimeToConnect
+		}
+		if item.AlternatePhone != "" {
+			lead.AlternatePhone = &item.AlternatePhone
+		}
+		if item.AlternatePhoneCountry != "" {
+			lead.AlternatePhoneCountry = &item.AlternatePhoneCountry
+		}
+		if item.LinkedinProfileUrl != "" {
+			lead.LinkedinProfileURL = &item.LinkedinProfileUrl
+		}
+		if item.LinkedinCompanyPageUrl != "" {
+			lead.LinkedinCompanyPageURL = &item.LinkedinCompanyPageUrl
+		}
+		lead.EstimatedRequirementDate = estReqDate
+		lead.LastContactDate = lastContact
+		lead.NextFollowUp = nextFollowUp
+		if item.BasicRequirements != "" {
+			lead.BasicRequirements = &item.BasicRequirements
+		}
+		if item.Notes != "" {
+			lead.Notes = &item.Notes
 		}
 
 		err = s.leadRepo.CreateLead(lead)
