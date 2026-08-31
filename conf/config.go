@@ -279,9 +279,21 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_lower ON leads (LOWER(company))`,
 		`CREATE INDEX IF NOT EXISTS idx_leads_deleted_at ON leads (deleted_at)`,
 
+		// Drop activities table if id column is UUID type
+		`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 
+				FROM information_schema.columns 
+				WHERE table_name = 'activities' AND column_name = 'id' AND data_type = 'uuid'
+			) THEN
+				DROP TABLE activities CASCADE;
+			END IF;
+		END $$;`,
+
 		// Activities Table
 		`CREATE TABLE IF NOT EXISTS activities (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id SERIAL PRIMARY KEY,
 			lead_id VARCHAR REFERENCES leads(lead_id) ON DELETE CASCADE,
 			type VARCHAR,
 			"desc" TEXT,
@@ -306,6 +318,20 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 				status = EXCLUDED.status,
 				sort_order = EXCLUDED.sort_order,
 				is_active = EXCLUDED.is_active`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS best_time VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lifecycle_template VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS kam_name VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS designation VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS best_time_to_connect VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alternate_phone VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alternate_phone_country VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_profile_url VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_company_page_url VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_requirement_date DATE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_contact_date TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS basic_requirements TEXT`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT`,
 	}
 
 	for _, q := range queries {

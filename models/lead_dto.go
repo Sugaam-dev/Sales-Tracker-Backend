@@ -23,6 +23,18 @@ type CreateLeadRequest struct {
 	LostReason         string `json:"lostReason"`
 	ProductService     string `json:"productService" binding:"required"`
 	RequestType        string `json:"requestType" binding:"required"`
+	LifecycleTemplate        string `json:"lifecycleTemplate"`
+	KamName                  string `json:"kamName"`
+	BestTimeToConnect        string `json:"bestTimeToConnect"`
+	AlternatePhone           string `json:"alternatePhone"`
+	AlternatePhoneCountry    string `json:"alternatePhoneCountry"`
+	LinkedinProfileUrl       string `json:"linkedinProfileUrl"`
+	LinkedinCompanyPageUrl   string `json:"linkedinCompanyPageUrl"`
+	EstimatedRequirementDate string `json:"estimatedRequirementDate"`
+	LastContactDate          string `json:"lastContactDate"`
+	NextFollowUp             string `json:"nextFollowUp"`
+	BasicRequirements        string `json:"basicRequirements"`
+	Notes                    string `json:"notes"`
 }
 
 type ActivityResponse struct {
@@ -47,4 +59,43 @@ func ToActivityResponse(a Activity) ActivityResponse {
 		DueDate:   dueDate,
 		Completed: a.Completed,
 	}
+}
+
+type CreateActivityRequest struct {
+	Type    string `json:"type" binding:"required,oneof=Call Email Demo Other"`
+	Desc    string `json:"desc" binding:"required"`
+	Outcome string `json:"outcome"`
+	DueDate string `json:"dueDate" binding:"omitempty,datetime=2006-01-02"`
+}
+
+type CompleteActivityRequest struct {
+	Completed bool `json:"completed"`
+}
+
+type BulkCreateLeadsRequest struct {
+	Leads []CreateLeadRequest `json:"leads" binding:"required,min=1,max=200,dive"`
+}
+
+type BulkCreateCreatedResponse struct {
+	LeadID  string `json:"leadId"`
+	Company string `json:"company"`
+}
+
+type BulkCreateFailedResponse struct {
+	Index   int               `json:"index"`
+	Company string            `json:"company"`
+	Errors  map[string]string `json:"errors"`
+}
+
+type BulkCreateSummary struct {
+	Total   int `json:"total"`
+	Created int `json:"created"`
+	Failed  int `json:"failed"`
+}
+
+type BulkCreateResponse struct {
+	Success bool                        `json:"success"`
+	Summary BulkCreateSummary           `json:"summary"`
+	Created []BulkCreateCreatedResponse `json:"created"`
+	Failed  []BulkCreateFailedResponse  `json:"failed"`
 }

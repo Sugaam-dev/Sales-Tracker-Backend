@@ -17,5 +17,7 @@ func RegisterLeadRoutes(rg *gin.RouterGroup, leadController *controllers.LeadCon
 		leads.PATCH("/:id", leadController.UpdateLead)
 		leads.DELETE("/:id", leadController.DeleteLead)
 		leads.GET("/:id/activities", leadController.GetLeadActivities)
+		leads.POST("/:id/activities", leadController.CreateActivity)
+		leads.POST("/bulk", leadController.BulkCreateLeads)
 	}
 }
