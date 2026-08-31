@@ -45,8 +45,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Migrate Lead models
-	gormDB.AutoMigrate(&models.Lead{}, &models.Activity{}, &models.LeadStage{})
+	// Migrate Lead & Commercial models
+	gormDB.AutoMigrate(
+		&models.Lead{}, &models.Activity{}, &models.LeadStage{},
+		&models.CommercialEstimation{}, &models.CommercialResource{},
+		&models.CommercialExpense{}, &models.SDLCAllocation{},
+	)
 	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
 
 	// Dependency Injection: Repository data-access layer.
@@ -88,6 +92,11 @@ func main() {
 	leadService := services.NewLeadService(leadRepo, userRepo)
 	leadController := controllers.NewLeadController(leadService, log)
 
+	// Commercial Module dependencies
+	commRepo := repository.NewCommercialRepository(db, gormDB)
+	commService := services.NewCommercialService(commRepo, leadRepo, userRepo)
+	commController := controllers.NewCommercialController(commService, log)
+
 	// Configure routing engine.
 	if cfg.Server.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -98,7 +107,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, leadController, jwtManager)
+	routes.RegisterRoutes(router, authController, leadController, commController, jwtManager)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
