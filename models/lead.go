@@ -39,6 +39,8 @@ type Lead struct {
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
 	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
 	BestTime           *string    `json:"bestTime" gorm:"column:best_time;type:varchar"`
+	ProductService     *string    `json:"productService" gorm:"column:product_service;type:varchar"`
+	RequestType        *string    `json:"requestType" gorm:"column:request_type;type:varchar"`
 	Activities         []Activity `json:"activities,omitempty" gorm:"foreignKey:LeadID;references:LeadID"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
@@ -89,6 +91,8 @@ type LeadResponse struct {
 	Value              *string    `json:"value,omitempty"`
 	LostReason         *string    `json:"lostReason,omitempty"`
 	BestTime           *string    `json:"bestTime,omitempty"`
+	ProductService     *string    `json:"productService,omitempty"`
+	RequestType        *string    `json:"requestType,omitempty"`
 	CreatedAt          string     `json:"createdAt"`
 	UpdatedAt          string     `json:"updatedAt"`
 }
@@ -127,4 +131,6 @@ type UpdateLeadRequest struct {
 	Sentiment          *string `json:"sentiment,omitempty"`
 	OfficePhone        *string `json:"officePhone,omitempty"`
 	OfficePhoneCountry *string `json:"officePhoneCountry,omitempty"`
+	ProductService     *string `json:"productService,omitempty"`
+	RequestType        *string `json:"requestType,omitempty"`
 }

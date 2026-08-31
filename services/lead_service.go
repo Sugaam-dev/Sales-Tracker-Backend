@@ -113,6 +113,12 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 	if req.BestTime != "" {
 		lead.BestTime = &req.BestTime
 	}
+	if req.ProductService != "" {
+		lead.ProductService = &req.ProductService
+	}
+	if req.RequestType != "" {
+		lead.RequestType = &req.RequestType
+	}
 	if req.LostReason != "" {
 		lead.LostReason = &req.LostReason
 	}
@@ -215,6 +221,12 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	}
 	if req.BestTime != nil {
 		updates["best_time"] = *req.BestTime
+	}
+	if req.ProductService != nil {
+		updates["product_service"] = *req.ProductService
+	}
+	if req.RequestType != nil {
+		updates["request_type"] = *req.RequestType
 	}
 
 	err = s.leadRepo.UpdateLead(leadID, updates)
@@ -363,6 +375,8 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		Value:              valStr,
 		LostReason:         l.LostReason,
 		BestTime:           l.BestTime,
+		ProductService:     l.ProductService,
+		RequestType:        l.RequestType,
 		CreatedAt:          l.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          l.UpdatedAt.Format(time.RFC3339),
 	}
