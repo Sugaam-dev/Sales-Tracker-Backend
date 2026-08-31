@@ -21,6 +21,7 @@ type Lead struct {
 	LeadID             string     `json:"leadId" gorm:"type:varchar;uniqueIndex;not null"`
 	Company            string     `json:"company" gorm:"type:varchar;not null"`
 	ProjectName        *string    `json:"projectName" gorm:"type:varchar"`
+	Designation        *string    `json:"designation" gorm:"type:varchar"`
 	Contact            *string    `json:"contact" gorm:"type:varchar"`
 	Email              *string    `json:"email" gorm:"type:varchar;uniqueIndex"`
 	Phone              *string    `json:"phone" gorm:"type:varchar"`
@@ -37,6 +38,19 @@ type Lead struct {
 	Priority           *string    `json:"priority" gorm:"type:varchar"`
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
 	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
+	BestTime           *string    `json:"bestTime" gorm:"column:best_time;type:varchar"`
+	LifecycleTemplate  *string    `json:"lifecycleTemplate" gorm:"column:lifecycle_template;type:varchar"`
+	KamName            *string    `json:"kamName" gorm:"column:kam_name;type:varchar"`
+	BestTimeToConnect  *string    `json:"bestTimeToConnect" gorm:"column:best_time_to_connect;type:varchar"`
+	AlternatePhone     *string    `json:"alternatePhone" gorm:"column:alternate_phone;type:varchar"`
+	AlternatePhoneCountry *string `json:"alternatePhoneCountry" gorm:"column:alternate_phone_country;type:varchar"`
+	LinkedinProfileURL *string    `json:"linkedinProfileUrl" gorm:"column:linkedin_profile_url;type:varchar"`
+	LinkedinCompanyPageURL *string `json:"linkedinCompanyPageUrl" gorm:"column:linkedin_company_page_url;type:varchar"`
+	EstimatedRequirementDate *time.Time `json:"estimatedRequirementDate" gorm:"column:estimated_requirement_date;type:date"`
+	LastContactDate    *time.Time `json:"lastContactDate" gorm:"column:last_contact_date;type:timestamp with time zone"`
+	NextFollowUp       *time.Time `json:"nextFollowUp" gorm:"column:next_follow_up;type:timestamp with time zone"`
+	BasicRequirements  *string    `json:"basicRequirements" gorm:"column:basic_requirements;type:text"`
+	Notes              *string    `json:"notes" gorm:"column:notes;type:text"`
 	Activities         []Activity `json:"activities,omitempty" gorm:"foreignKey:LeadID;references:LeadID"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
@@ -69,6 +83,7 @@ type LeadResponse struct {
 	ID                 string     `json:"id"`
 	Company            string     `json:"company"`
 	ProjectName        *string    `json:"projectName,omitempty"`
+	Designation        *string    `json:"designation,omitempty"`
 	Contact            *string    `json:"contact,omitempty"`
 	Email              *string    `json:"email,omitempty"`
 	Phone              *string    `json:"phone,omitempty"`
@@ -85,6 +100,19 @@ type LeadResponse struct {
 	Priority           *string    `json:"priority,omitempty"`
 	Value              *string    `json:"value,omitempty"`
 	LostReason         *string    `json:"lostReason,omitempty"`
+	BestTime           *string    `json:"bestTime,omitempty"`
+	LifecycleTemplate  *string    `json:"lifecycleTemplate,omitempty"`
+	KamName            *string    `json:"kamName,omitempty"`
+	BestTimeToConnect  *string    `json:"bestTimeToConnect,omitempty"`
+	AlternatePhone     *string    `json:"alternatePhone,omitempty"`
+	AlternatePhoneCountry *string `json:"alternatePhoneCountry,omitempty"`
+	LinkedinProfileURL *string    `json:"linkedinProfileUrl,omitempty"`
+	LinkedinCompanyPageURL *string `json:"linkedinCompanyPageUrl,omitempty"`
+	EstimatedRequirementDate *string `json:"estimatedRequirementDate,omitempty"`
+	LastContactDate    *string    `json:"lastContactDate,omitempty"`
+	NextFollowUp       *string    `json:"nextFollowUp,omitempty"`
+	BasicRequirements  *string    `json:"basicRequirements,omitempty"`
+	Notes              *string    `json:"notes,omitempty"`
 	CreatedAt          string     `json:"createdAt"`
 	UpdatedAt          string     `json:"updatedAt"`
 }
@@ -103,13 +131,36 @@ type LeadListResponse struct {
 }
 
 type UpdateLeadRequest struct {
-	Owner      *string `json:"owner,omitempty"`
-	Stage      *string `json:"stage,omitempty"`
-	Status     *string `json:"status,omitempty"`
-	Priority   *string `json:"priority,omitempty"`
-	Contact    *string `json:"contact,omitempty"`
-	Email      *string `json:"email,omitempty"`
-	Phone      *string `json:"phone,omitempty"`
-	Value      *string `json:"value,omitempty"`
-	LostReason *string `json:"lostReason,omitempty"`
+	Owner                    *string `json:"owner,omitempty"`
+	Stage                    *string `json:"stage,omitempty"`
+	Status                   *string `json:"status,omitempty"`
+	Priority                 *string `json:"priority,omitempty"`
+	Contact                  *string `json:"contact,omitempty"`
+	Email                    *string `json:"email,omitempty"`
+	Phone                    *string `json:"phone,omitempty"`
+	Value                    *string `json:"value,omitempty"`
+	LostReason               *string `json:"lostReason,omitempty"`
+	BestTime                 *string `json:"bestTime,omitempty"`
+	Company                  *string `json:"company,omitempty"`
+	ProjectName              *string `json:"projectName,omitempty"`
+	Designation              *string `json:"designation,omitempty"`
+	Industry                 *string `json:"industry,omitempty"`
+	Size                     *string `json:"size,omitempty"`
+	Region                   *string `json:"region,omitempty"`
+	Source                   *string `json:"source,omitempty"`
+	Sentiment                *string `json:"sentiment,omitempty"`
+	OfficePhone              *string `json:"officePhone,omitempty"`
+	OfficePhoneCountry       *string `json:"officePhoneCountry,omitempty"`
+	LifecycleTemplate        *string `json:"lifecycleTemplate,omitempty"`
+	KamName                  *string `json:"kamName,omitempty"`
+	BestTimeToConnect        *string `json:"bestTimeToConnect,omitempty"`
+	AlternatePhone           *string `json:"alternatePhone,omitempty"`
+	AlternatePhoneCountry    *string `json:"alternatePhoneCountry,omitempty"`
+	LinkedinProfileURL       *string `json:"linkedinProfileUrl,omitempty"`
+	LinkedinCompanyPageURL   *string `json:"linkedinCompanyPageUrl,omitempty"`
+	EstimatedRequirementDate *string `json:"estimatedRequirementDate,omitempty"`
+	LastContactDate          *string `json:"lastContactDate,omitempty"`
+	NextFollowUp             *string `json:"nextFollowUp,omitempty"`
+	BasicRequirements        *string `json:"basicRequirements,omitempty"`
+	Notes                    *string `json:"notes,omitempty"`
 }

@@ -121,7 +121,7 @@ func getEnv(key, fallback string) string {
 
 // ConnectDB establishes a connection pool to the target PostgreSQL database using pgxpool.
 func ConnectDB(cfg DBConfig, log *slog.Logger) (*pgxpool.Pool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	log.Info(
@@ -318,6 +318,21 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 				status = EXCLUDED.status,
 				sort_order = EXCLUDED.sort_order,
 				is_active = EXCLUDED.is_active`,
+		// Additional Lead Columns
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS best_time VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lifecycle_template VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS kam_name VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS designation VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS best_time_to_connect VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alternate_phone VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS alternate_phone_country VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_profile_url VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_company_page_url VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_requirement_date DATE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_contact_date TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP WITH TIME ZONE`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS basic_requirements TEXT`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT`,
 
 		// Commercial Estimations
 		`CREATE TABLE IF NOT EXISTS commercial_estimations (

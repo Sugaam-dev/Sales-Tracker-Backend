@@ -83,34 +83,38 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 
 	// Setup a Lead owned by KAM One
 	lead1 := &models.Lead{
-		LeadID:      "L-9001",
-		Company:     "KAM1 Company",
-		Contact:     strPtr("Contact 1"),
-		Email:       strPtr("contact1@kam1.com"),
-		Phone:       strPtr("9876543210"),
-		OfficePhone: strPtr("9123456780"),
-		Owner:       strPtr("KAM One"),
-		Stage:       strPtr("Prospecting"),
-		Status:      strPtr("Open"),
-		Sentiment:   strPtr("Positive"),
-		Priority:    strPtr("High"),
+		LeadID:            "L-9001",
+		Company:           "KAM1 Company",
+		Contact:           strPtr("Contact 1"),
+		Email:             strPtr("contact1@kam1.com"),
+		Phone:             strPtr("9876543210"),
+		OfficePhone:       strPtr("9123456780"),
+		Owner:             strPtr("KAM One"),
+		Stage:             strPtr("Prospecting"),
+		Status:            strPtr("Open"),
+		Sentiment:         strPtr("Positive"),
+		Priority:          strPtr("High"),
+		KamName:           strPtr("KAM One"),
+		BasicRequirements: strPtr("Initial requirements"),
 	}
 	_ = gormDB.Create(lead1)
 
 	// Setup a soft-deleted Lead
 	leadSoftDeleted := &models.Lead{
-		LeadID:      "L-9002",
-		Company:     "Soft Deleted Corp",
-		Contact:     strPtr("Contact 2"),
-		Email:       strPtr("contact2@deleted.com"),
-		Phone:       strPtr("9876543210"),
-		OfficePhone: strPtr("9123456780"),
-		Owner:       strPtr("KAM One"),
-		Stage:       strPtr("Prospecting"),
-		Status:      strPtr("Open"),
-		Sentiment:   strPtr("Positive"),
-		Priority:    strPtr("High"),
-		DeletedAt:   timePtr(time.Now()),
+		LeadID:            "L-9002",
+		Company:           "Soft Deleted Corp",
+		Contact:           strPtr("Contact 2"),
+		Email:             strPtr("contact2@deleted.com"),
+		Phone:             strPtr("9876543210"),
+		OfficePhone:       strPtr("9123456780"),
+		Owner:             strPtr("KAM One"),
+		Stage:             strPtr("Prospecting"),
+		Status:            strPtr("Open"),
+		Sentiment:         strPtr("Positive"),
+		Priority:          strPtr("High"),
+		DeletedAt:         timePtr(time.Now()),
+		KamName:           strPtr("KAM One"),
+		BasicRequirements: strPtr("Some requirements"),
 	}
 	_ = gormDB.Create(leadSoftDeleted)
 
@@ -223,8 +227,82 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 	})
 
+	t.Run("Lead Profile - CRUD operations and validation", func(t *testing.T) {
+		// Test Lead creation with the new fields
+		req := models.CreateLeadRequest{
+			Company:                  "Profile Test Comp",
+			Contact:                  "Jane Doe",
+			Email:                    "profile@test.com",
+			Phone:                    "9876543210",
+			OfficePhone:              "9123456780",
+			Owner:                    "KAM One",
+			Stage:                    "Prospecting",
+			Status:                   "Open",
+			Sentiment:                "Positive",
+			Priority:                 "High",
+			LifecycleTemplate:        "Enterprise Sales",
+			KamName:                  "John Doe",
+			Designation:              "VP of Sales",
+			BestTimeToConnect:        "Morning",
+			AlternatePhone:           "9876543211",
+			AlternatePhoneCountry:    "+91",
+			LinkedinProfileUrl:       "https://linkedin.com/in/johndoe",
+			LinkedinCompanyPageUrl:   "https://linkedin.com/company/example",
+			EstimatedRequirementDate: "2026-07-15",
+			LastContactDate:          "2026-06-15T15:00:00Z",
+			NextFollowUp:             "2026-06-20T10:00:00Z",
+			BasicRequirements:        "Requirement description",
+			Notes:                    "Internal notes",
+		}
+
+		leadResp, err := leadService.CreateLead(req)
+		if err != nil {
+			t.Fatalf("Failed to create Lead with Profile fields: %v", err)
+		}
+
+		if leadResp.LifecycleTemplate == nil || *leadResp.LifecycleTemplate != "Enterprise Sales" {
+			t.Errorf("Expected LifecycleTemplate 'Enterprise Sales', got %v", leadResp.LifecycleTemplate)
+		}
+		if leadResp.KamName == nil || *leadResp.KamName != "John Doe" {
+			t.Errorf("Expected KamName 'John Doe', got %v", leadResp.KamName)
+		}
+		if leadResp.BasicRequirements == nil || *leadResp.BasicRequirements != "Requirement description" {
+			t.Errorf("Expected BasicRequirements 'Requirement description', got %v", leadResp.BasicRequirements)
+		}
+
+		// Test GORM fetching
+		fetched, err := leadService.GetLead(ctx, leadResp.ID)
+		if err != nil {
+			t.Fatalf("Failed to fetch lead: %v", err)
+		}
+		if fetched.LifecycleTemplate == nil || *fetched.LifecycleTemplate != "Enterprise Sales" {
+			t.Errorf("Expected LifecycleTemplate 'Enterprise Sales' on fetch, got %v", fetched.LifecycleTemplate)
+		}
+
+		// Test PATCH update
+		updateReq := models.UpdateLeadRequest{
+			KamName:           strPtr("Jane Smith"),
+			BasicRequirements: strPtr("Updated basic requirements"),
+		}
+		updated, err := leadService.UpdateLead(leadResp.ID, "admin", "test_admin@pmrgsolution.com", updateReq)
+		if err != nil {
+			t.Fatalf("Failed to update Lead: %v", err)
+		}
+		if updated.KamName == nil || *updated.KamName != "Jane Smith" {
+			t.Errorf("Expected KamName 'Jane Smith', got %v", updated.KamName)
+		}
+
+		// Test required validation on update
+		invalidUpdate := models.UpdateLeadRequest{
+			KamName: strPtr(""), // Cannot be empty
+		}
+		_, err = leadService.UpdateLead(leadResp.ID, "admin", "test_admin@pmrgsolution.com", invalidUpdate)
+		if err == nil {
+			t.Error("Expected error when updating KamName to empty, got nil")
+		}
+	})
+
 	t.Run("Bulk Create Leads - Validation and Duplicates", func(t *testing.T) {
-		// Test one valid lead, one duplicate email in request, and one invalid phone
 		req := models.BulkCreateLeadsRequest{
 			Leads: []models.CreateLeadRequest{
 				{
@@ -239,6 +317,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					KamName:            "KAM One",
+					BasicRequirements:  "Some requirements",
 				},
 				{
 					Company:            "Unique Company B",
@@ -252,6 +332,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					KamName:            "KAM One",
+					BasicRequirements:  "Some requirements",
 				},
 				{
 					Company:            "Unique Company C",
@@ -265,6 +347,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					KamName:            "KAM One",
+					BasicRequirements:  "Some requirements",
 				},
 				{
 					Company:            "Unique Company A", // Case-insensitive duplicate company in request
@@ -278,6 +362,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					KamName:            "KAM One",
+					BasicRequirements:  "Some requirements",
 				},
 			},
 		}
@@ -328,6 +414,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 							Status:             "Open",
 							Sentiment:          "Positive",
 							Priority:           "High",
+							KamName:            "KAM One",
+							BasicRequirements:  "Concurrent test requirements",
 						},
 					},
 				}
