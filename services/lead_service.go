@@ -134,11 +134,11 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		}
 	}
 
-	if req.KamName == "" {
-		return nil, ErrValidation
+	if req.KamName != "" {
+		lead.KamName = &req.KamName
 	}
-	if req.BasicRequirements == "" {
-		return nil, ErrValidation
+	if req.BasicRequirements != "" {
+		lead.BasicRequirements = &req.BasicRequirements
 	}
 
 	if req.AlternatePhone != "" {
@@ -280,33 +280,7 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	}
 
 	if newStatus != nil && newStage != nil {
-		statusVal := *newStatus
-		stageVal := *newStage
-
-		if statusVal == "Won" && stageVal != "Closed Won" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Lost" && stageVal != "Closed Lost" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Open" && stageVal != "Prospecting" {
-			return nil, ErrValidation
-		}
-		if statusVal == "New" && stageVal != "Qualification" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Contacted" && stageVal != "Initial Discussion" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Analysis" && stageVal != "Needs Analysis" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Interested" && stageVal != "Proposal" {
-			return nil, ErrValidation
-		}
-		if statusVal == "Negotiation" && stageVal != "Negotiation" {
-			return nil, ErrValidation
-		}
+		// removed strict status validation
 	}
 
 	if newStatus != nil && *newStatus == "Lost" {
@@ -321,12 +295,7 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 		}
 	}
 
-	if req.KamName != nil && *req.KamName == "" {
-		return nil, ErrValidation
-	}
-	if req.BasicRequirements != nil && *req.BasicRequirements == "" {
-		return nil, ErrValidation
-	}
+	// Relaxed validation
 
 	if req.AlternatePhone != nil && *req.AlternatePhone != "" {
 		phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)

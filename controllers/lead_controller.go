@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -56,6 +57,7 @@ func (ctrl *LeadController) handleServiceError(c *gin.Context, err error) {
 func (ctrl *LeadController) CreateLead(c *gin.Context) {
 	var req models.CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Println("CREATE LEAD VALIDATION ERROR:", err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
