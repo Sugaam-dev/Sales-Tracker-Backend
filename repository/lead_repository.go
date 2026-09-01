@@ -259,7 +259,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	limitOffsetSQL := fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", orderByCol, dir, argCount, argCount+1)
 	args = append(args, limit, offset)
 
-	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, created_at, updated_at 
+	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, product_service, request_type, created_at, updated_at 
 				  FROM leads` + whereSQL + limitOffsetSQL
 
 	rows, err := r.pgx.Query(ctx, dataQuery, args...)
@@ -279,6 +279,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 			&l.LifecycleTemplate, &l.KamName, &l.Designation, &l.BestTimeToConnect,
 			&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
 			&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
+			&l.ProductService, &l.RequestType,
 			&l.CreatedAt, &l.UpdatedAt,
 		)
 		if err != nil {
@@ -293,7 +294,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 }
 
 func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.Lead, error) {
-	query := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, created_at, updated_at 
+	query := `SELECT id, lead_id, company, project_name, contact, email, phone, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, product_service, request_type, created_at, updated_at 
 			  FROM leads 
 			  WHERE lead_id = $1 AND deleted_at IS NULL`
 	row := r.pgx.QueryRow(ctx, query, leadID)
@@ -307,6 +308,7 @@ func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.L
 		&l.LifecycleTemplate, &l.KamName, &l.Designation, &l.BestTimeToConnect,
 		&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
 		&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
+		&l.ProductService, &l.RequestType,
 		&l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
