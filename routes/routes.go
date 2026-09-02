@@ -10,13 +10,20 @@ import (
 )
 
 // RegisterRoutes mounts all route groups on the given engine.
-func RegisterRoutes(router *gin.Engine, authController *controllers.AuthController, leadController *controllers.LeadController, jwtManager *helpers.JWTManager) {
+func RegisterRoutes(
+	router *gin.Engine,
+	authController *controllers.AuthController,
+	leadController *controllers.LeadController,
+	commercialController *controllers.CommercialController,
+	jwtManager *helpers.JWTManager,
+) {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	apiV1 := router.Group("/api/v1")
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
 	v1.RegisterLeadRoutes(apiV1, leadController, jwtManager)
+	v1.RegisterCommercialRoutes(apiV1, commercialController, jwtManager)
 	apiV1.POST("/users", middleware.AuthMiddleware(jwtManager), authController.CreateUser)
 
 	// Lead Module routes from Sahil

@@ -121,7 +121,7 @@ func getEnv(key, fallback string) string {
 
 // ConnectDB establishes a connection pool to the target PostgreSQL database using pgxpool.
 func ConnectDB(cfg DBConfig, log *slog.Logger) (*pgxpool.Pool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	log.Info(
@@ -256,6 +256,7 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			contact VARCHAR,
 			email VARCHAR UNIQUE,
 			phone VARCHAR,
+			phone_country VARCHAR,
 			office_phone VARCHAR,
 			office_phone_country VARCHAR,
 			owner VARCHAR,
@@ -269,11 +270,17 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			priority VARCHAR,
 			value NUMERIC(15, 2),
 			lost_reason VARCHAR,
+			request_details TEXT,
+			request_type VARCHAR,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP WITH TIME ZONE
 		)`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason VARCHAR`,
+		`ALTER TABLE leads DROP COLUMN IF EXISTS product_service`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS request_details TEXT`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS request_type VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country VARCHAR`,
 
 		// Leads Constraints / Indexes
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_lower ON leads (LOWER(company))`,
@@ -318,6 +325,7 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 				status = EXCLUDED.status,
 				sort_order = EXCLUDED.sort_order,
 				is_active = EXCLUDED.is_active`,
+		// Additional Lead Columns
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS best_time VARCHAR`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lifecycle_template VARCHAR`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS kam_name VARCHAR`,
@@ -332,6 +340,66 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up TIMESTAMP WITH TIME ZONE`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS basic_requirements TEXT`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT`,
+
+		// Commercial Estimations
+		`CREATE TABLE IF NOT EXISTS commercial_estimations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			lead_id VARCHAR UNIQUE NOT NULL REFERENCES leads(lead_id) ON DELETE CASCADE,
+			currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+			billing_type VARCHAR(50) NOT NULL DEFAULT 'T&M',
+			start_date DATE NOT NULL DEFAULT CURRENT_DATE,
+			estimated_duration_months INT NOT NULL DEFAULT 1,
+			estimated_end_date DATE NOT NULL DEFAULT (CURRENT_DATE + INTERVAL '1 month'),
+			markup_percent NUMERIC(5,2) NOT NULL DEFAULT 0.00,
+			discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0.00,
+			manual_selling_price NUMERIC(15,2),
+			status VARCHAR(30) NOT NULL DEFAULT 'DRAFT',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_comm_est_lead ON commercial_estimations(lead_id)`,
+
+		// Commercial Resources
+		`CREATE TABLE IF NOT EXISTS commercial_resources (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			commercial_estimation_id UUID NOT NULL REFERENCES commercial_estimations(id) ON DELETE CASCADE,
+			role VARCHAR(100) NOT NULL,
+			grade VARCHAR(50) NOT NULL,
+			onsite_days INT NOT NULL DEFAULT 0,
+			offshore_days INT NOT NULL DEFAULT 0,
+			daily_cost NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+			billing_rate NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+			total_cost NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+			total_revenue NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`ALTER TABLE commercial_resources ADD COLUMN IF NOT EXISTS total_cost NUMERIC(15,2) NOT NULL DEFAULT 0.00`,
+		`ALTER TABLE commercial_resources ADD COLUMN IF NOT EXISTS total_revenue NUMERIC(15,2) NOT NULL DEFAULT 0.00`,
+		`CREATE INDEX IF NOT EXISTS idx_comm_res_est ON commercial_resources(commercial_estimation_id)`,
+
+		// Commercial Expenses
+		`CREATE TABLE IF NOT EXISTS commercial_expenses (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			commercial_estimation_id UUID NOT NULL REFERENCES commercial_estimations(id) ON DELETE CASCADE,
+			expense_type VARCHAR(100) NOT NULL,
+			cost NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+			remarks TEXT,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_comm_exp_est ON commercial_expenses(commercial_estimation_id)`,
+
+		// SDLC Allocations
+		`CREATE TABLE IF NOT EXISTS sdlc_allocations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			commercial_estimation_id UUID NOT NULL REFERENCES commercial_estimations(id) ON DELETE CASCADE,
+			phase VARCHAR(100) NOT NULL,
+			man_days INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sdlc_est ON sdlc_allocations(commercial_estimation_id)`,
 	}
 
 	for _, q := range queries {

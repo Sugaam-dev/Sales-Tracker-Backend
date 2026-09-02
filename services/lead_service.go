@@ -69,18 +69,87 @@ func (s *leadService) handleDBError(err error) error {
 }
 
 func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error) {
-	req.Email = strings.ToLower(req.Email)
+	// Support conceptual aliases from frontend Quick Create Lead form
+	if req.Company == "" && req.CompanyName != "" {
+		req.Company = req.CompanyName
+	}
+	if req.Contact == "" && req.LeadName != "" {
+		req.Contact = req.LeadName
+	}
+	if req.Phone == "" && req.ContactNumber != "" {
+		req.Phone = req.ContactNumber
+	}
+	if req.CountryCode == "" && req.OfficePhoneCountry != "" {
+		req.CountryCode = req.OfficePhoneCountry
+	}
+	if req.OfficePhoneCountry == "" && req.CountryCode != "" {
+		req.OfficePhoneCountry = req.CountryCode
+	}
+	if req.Owner == "" && req.LeadOwner != "" {
+		req.Owner = req.LeadOwner
+	}
+	if req.Status == "" && req.LeadStatus != "" {
+		req.Status = req.LeadStatus
+	}
+	if req.EstimatedRequirementDate == "" && req.EstimatedReqDate != "" {
+		req.EstimatedRequirementDate = req.EstimatedReqDate
+	}
+
+	// 1. Basic Required Fields
+	if strings.TrimSpace(req.Company) == "" {
+		return nil, helpers.ErrBadRequest("Company is required.")
+	}
+	if strings.TrimSpace(req.Contact) == "" {
+		return nil, helpers.ErrBadRequest("Contact is required.")
+	}
+	if strings.TrimSpace(req.Priority) == "" {
+		return nil, helpers.ErrBadRequest("Priority is required.")
+	}
+
+	// 2. Email Validation (required, general format, not restricted to .com)
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if req.Email == "" {
+		return nil, helpers.ErrBadRequest("Email is required.")
+	}
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	if !emailRegex.MatchString(req.Email) {
+		return nil, helpers.ErrBadRequest("Invalid email format.")
+	}
+
+	// 3. Request Type Validation (Strictly "IT Product" or "IT Service")
+	req.RequestType = strings.TrimSpace(req.RequestType)
+	if req.RequestType != "IT Product" && req.RequestType != "IT Service" {
+		return nil, helpers.ErrBadRequest("Request type must be either 'IT Product' or 'IT Service'.")
+	}
+
+	// 4. Request Details Validation (Word count 50-200 words inclusive)
+	req.RequestDetails = strings.TrimSpace(req.RequestDetails)
+	if req.RequestDetails == "" {
+		return nil, helpers.ErrBadRequest("Request details is required.")
+	}
+	wordCount := helpers.CountWords(req.RequestDetails)
+	if wordCount < 50 {
+		return nil, helpers.ErrBadRequest("Request details must contain at least 50 words.")
+	}
+	if wordCount > 200 {
+		return nil, helpers.ErrBadRequest("Request details cannot exceed 200 words.")
+	}
+
+	// 5. Phone & Country Code Validation
+	if err := helpers.ValidatePhoneNumber(req.Phone, req.CountryCode); err != nil {
+		return nil, helpers.ErrBadRequest(err.Error())
+	}
 
 	if req.Owner != "" {
 		exists, err := s.leadRepo.CheckUserExists(req.Owner)
 		if err != nil || !exists {
-			return nil, ErrValidation
+			return nil, helpers.ErrBadRequest("Owner does not exist.")
 		}
 	}
 	if req.Stage != "" {
 		exists, err := s.leadRepo.CheckStageExists(req.Stage)
 		if err != nil || !exists {
-			return nil, ErrValidation
+			return nil, helpers.ErrBadRequest("Stage does not exist.")
 		}
 	}
 
@@ -89,6 +158,7 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		Contact:            &req.Contact,
 		Email:              &req.Email,
 		Phone:              &req.Phone,
+		PhoneCountry:       &req.CountryCode,
 		OfficePhone:        &req.OfficePhone,
 		OfficePhoneCountry: &req.OfficePhoneCountry,
 		Owner:              &req.Owner,
@@ -96,6 +166,8 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		Status:             &req.Status,
 		Sentiment:          &req.Sentiment,
 		Priority:           &req.Priority,
+		RequestDetails:     &req.RequestDetails,
+		RequestType:        &req.RequestType,
 	}
 	if req.ProjectName != "" {
 		lead.ProjectName = &req.ProjectName
@@ -117,12 +189,6 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 	}
 	if req.BestTime != "" {
 		lead.BestTime = &req.BestTime
-	}
-	if req.ProductService != "" {
-		lead.ProductService = &req.ProductService
-	}
-	if req.RequestType != "" {
-		lead.RequestType = &req.RequestType
 	}
 	if req.LostReason != "" {
 		lead.LostReason = &req.LostReason
@@ -280,7 +346,21 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	}
 
 	if newStatus != nil && newStage != nil {
-		// removed strict status validation
+		statusStageMap := map[string]string{
+			"Open":        "Prospecting",
+			"New":         "Qualification",
+			"Contacted":   "Initial Discussion",
+			"Analysis":    "Needs Analysis",
+			"Interested":  "Proposal",
+			"Negotiation": "Negotiation",
+			"Won":         "Closed Won",
+			"Lost":        "Closed Lost",
+		}
+		if expectedStage, ok := statusStageMap[*newStatus]; ok {
+			if *newStage != expectedStage {
+				return nil, ErrValidation
+			}
+		}
 	}
 
 	if newStatus != nil && *newStatus == "Lost" {
@@ -368,11 +448,29 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	if req.BestTime != nil {
 		updates["best_time"] = *req.BestTime
 	}
-	if req.ProductService != nil {
-		updates["product_service"] = *req.ProductService
+	if req.RequestDetails != nil {
+		reqDetails := strings.TrimSpace(*req.RequestDetails)
+		if reqDetails == "" {
+			return nil, helpers.ErrBadRequest("Request details is required.")
+		}
+		wordCount := helpers.CountWords(reqDetails)
+		if wordCount < 50 {
+			return nil, helpers.ErrBadRequest("Request details must contain at least 50 words.")
+		}
+		if wordCount > 200 {
+			return nil, helpers.ErrBadRequest("Request details cannot exceed 200 words.")
+		}
+		updates["request_details"] = reqDetails
 	}
 	if req.RequestType != nil {
-		updates["request_type"] = *req.RequestType
+		reqType := strings.TrimSpace(*req.RequestType)
+		if reqType != "IT Product" && reqType != "IT Service" {
+			return nil, helpers.ErrBadRequest("Request type must be either 'IT Product' or 'IT Service'.")
+		}
+		updates["request_type"] = reqType
+	}
+	if req.CountryCode != nil {
+		updates["phone_country"] = *req.CountryCode
 	}
 
 	if req.LifecycleTemplate != nil {
@@ -631,8 +729,9 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		NextFollowUp:             nextFollow,
 		BasicRequirements:        l.BasicRequirements,
 		Notes:                    l.Notes,
-		ProductService:           l.ProductService,
+		RequestDetails:           l.RequestDetails,
 		RequestType:              l.RequestType,
+		CountryCode:              l.PhoneCountry,
 		CreatedAt:                l.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:                l.UpdatedAt.Format(time.RFC3339),
 	}
@@ -937,6 +1036,15 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 		}
 		if item.Source != "" {
 			lead.Source = &item.Source
+		}
+		if item.RequestDetails != "" {
+			lead.RequestDetails = &item.RequestDetails
+		}
+		if item.RequestType != "" {
+			lead.RequestType = &item.RequestType
+		}
+		if item.CountryCode != "" {
+			lead.PhoneCountry = &item.CountryCode
 		}
 
 		if item.LifecycleTemplate != "" {

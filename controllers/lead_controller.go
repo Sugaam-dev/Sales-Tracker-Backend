@@ -37,6 +37,11 @@ func (ctrl *LeadController) errorResponse(c *gin.Context, status int, message st
 }
 
 func (ctrl *LeadController) handleServiceError(c *gin.Context, err error) {
+	var appErr *helpers.AppError
+	if errors.As(err, &appErr) {
+		ctrl.errorResponse(c, appErr.Status, appErr.Message)
+		return
+	}
 	if errors.Is(err, services.ErrNotFound) {
 		ctrl.errorResponse(c, http.StatusNotFound, "Lead not found")
 	} else if errors.Is(err, services.ErrUnauthorized) {
