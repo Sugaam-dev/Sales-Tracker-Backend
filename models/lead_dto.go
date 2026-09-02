@@ -1,28 +1,34 @@
 package models
 
 type CreateLeadRequest struct {
-	Company            string `json:"company" binding:"required"`
-	ProjectName        string `json:"projectName"`
-	Contact            string `json:"contact" binding:"required"`
-	Email              string `json:"email"`
-	Phone              string `json:"phone" binding:"required"`
-	OfficePhone        string `json:"officePhone"`
-	OfficePhoneCountry string `json:"officePhoneCountry"`
-	Owner              string `json:"owner" binding:"required"`
-	Industry           string `json:"industry"`
-	Size               string `json:"size"`
-	Region             string `json:"region"`
-	Source             string `json:"source"`
-	Stage              string `json:"stage"`
-	Status             string `json:"status" binding:"required"`
-	Sentiment          string `json:"sentiment"`
-	Priority           string `json:"priority" binding:"required"`
-	Designation        string `json:"designation"`
-	BestTime           string `json:"bestTime"`
-	Value              string `json:"value"`
-	LostReason         string `json:"lostReason"`
-	ProductService     string `json:"productService" binding:"required"`
-	RequestType        string `json:"requestType" binding:"required"`
+	Company                  string `json:"company"`
+	CompanyName              string `json:"companyName"`
+	ProjectName              string `json:"projectName"`
+	Contact                  string `json:"contact"`
+	LeadName                 string `json:"leadName"`
+	Email                    string `json:"email" binding:"required"`
+	Phone                    string `json:"phone"`
+	ContactNumber            string `json:"contactNumber"`
+	CountryCode              string `json:"countryCode"`
+	OfficePhone              string `json:"officePhone"`
+	OfficePhoneCountry       string `json:"officePhoneCountry"`
+	Owner                    string `json:"owner"`
+	LeadOwner                string `json:"leadOwner"`
+	Industry                 string `json:"industry"`
+	Size                     string `json:"size"`
+	Region                   string `json:"region"`
+	Source                   string `json:"source"`
+	Stage                    string `json:"stage"`
+	Status                   string `json:"status"`
+	LeadStatus               string `json:"leadStatus"`
+	Sentiment                string `json:"sentiment"`
+	Priority                 string `json:"priority" binding:"required"`
+	Designation              string `json:"designation"`
+	BestTime                 string `json:"bestTime"`
+	Value                    string `json:"value"`
+	LostReason               string `json:"lostReason"`
+	RequestType              string `json:"requestType" binding:"required"`
+	RequestDetails           string `json:"requestDetails" binding:"required"`
 	LifecycleTemplate        string `json:"lifecycleTemplate"`
 	KamName                  string `json:"kamName"`
 	BestTimeToConnect        string `json:"bestTimeToConnect"`
@@ -31,6 +37,7 @@ type CreateLeadRequest struct {
 	LinkedinProfileUrl       string `json:"linkedinProfileUrl"`
 	LinkedinCompanyPageUrl   string `json:"linkedinCompanyPageUrl"`
 	EstimatedRequirementDate string `json:"estimatedRequirementDate"`
+	EstimatedReqDate         string `json:"estimatedReqDate"`
 	LastContactDate          string `json:"lastContactDate"`
 	NextFollowUp             string `json:"nextFollowUp"`
 	BasicRequirements        string `json:"basicRequirements"`

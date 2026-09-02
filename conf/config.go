@@ -256,6 +256,7 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			contact VARCHAR,
 			email VARCHAR UNIQUE,
 			phone VARCHAR,
+			phone_country VARCHAR,
 			office_phone VARCHAR,
 			office_phone_country VARCHAR,
 			owner VARCHAR,
@@ -269,11 +270,17 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			priority VARCHAR,
 			value NUMERIC(15, 2),
 			lost_reason VARCHAR,
+			request_details TEXT,
+			request_type VARCHAR,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP WITH TIME ZONE
 		)`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason VARCHAR`,
+		`ALTER TABLE leads DROP COLUMN IF EXISTS product_service`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS request_details TEXT`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS request_type VARCHAR`,
+		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone_country VARCHAR`,
 
 		// Leads Constraints / Indexes
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_lower ON leads (LOWER(company))`,

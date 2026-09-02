@@ -25,6 +25,7 @@ type Lead struct {
 	Contact            *string    `json:"contact" gorm:"type:varchar"`
 	Email              *string    `json:"email" gorm:"type:varchar;uniqueIndex"`
 	Phone              *string    `json:"phone" gorm:"type:varchar"`
+	PhoneCountry       *string    `json:"countryCode,omitempty" gorm:"column:phone_country;type:varchar"`
 	OfficePhone        *string    `json:"officePhone" gorm:"type:varchar"`
 	OfficePhoneCountry *string    `json:"officePhoneCountry" gorm:"type:varchar"`
 	Owner              *string    `json:"owner" gorm:"type:varchar"`
@@ -39,7 +40,7 @@ type Lead struct {
 	Value              *float64   `json:"value" gorm:"type:numeric(15,2)"`
 	LostReason         *string    `json:"lostReason" gorm:"column:lost_reason;type:varchar"`
 	BestTime           *string    `json:"bestTime" gorm:"column:best_time;type:varchar"`
-	ProductService     *string    `json:"productService" gorm:"column:product_service;type:varchar"`
+	RequestDetails     *string    `json:"requestDetails,omitempty" gorm:"column:request_details;type:text"`
 	RequestType        *string    `json:"requestType" gorm:"column:request_type;type:varchar"`
 	LifecycleTemplate  *string    `json:"lifecycleTemplate" gorm:"column:lifecycle_template;type:varchar"`
 	KamName            *string    `json:"kamName" gorm:"column:kam_name;type:varchar"`
@@ -103,8 +104,9 @@ type LeadResponse struct {
 	Value              *string    `json:"value,omitempty"`
 	LostReason         *string    `json:"lostReason,omitempty"`
 	BestTime           *string    `json:"bestTime,omitempty"`
-	ProductService     *string    `json:"productService,omitempty"`
+	RequestDetails     *string    `json:"requestDetails,omitempty"`
 	RequestType        *string    `json:"requestType,omitempty"`
+	CountryCode        *string    `json:"countryCode,omitempty"`
 	LifecycleTemplate  *string    `json:"lifecycleTemplate,omitempty"`
 	KamName            *string    `json:"kamName,omitempty"`
 	BestTimeToConnect  *string    `json:"bestTimeToConnect,omitempty"`
@@ -135,8 +137,9 @@ type LeadListResponse struct {
 }
 
 type UpdateLeadRequest struct {
-	ProductService     *string `json:"productService,omitempty"`
+	RequestDetails     *string `json:"requestDetails,omitempty"`
 	RequestType        *string `json:"requestType,omitempty"`
+	CountryCode        *string `json:"countryCode,omitempty"`
 	Owner                    *string `json:"owner,omitempty"`
 	Stage                    *string `json:"stage,omitempty"`
 	Status                   *string `json:"status,omitempty"`
