@@ -921,8 +921,19 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 		if item.KamName == "" {
 			errorsMap["kamName"] = "KAM Name is required"
 		}
+		if item.BasicRequirements == "" && item.RequestDetails != "" {
+			item.BasicRequirements = item.RequestDetails
+		}
 		if item.BasicRequirements == "" {
 			errorsMap["basicRequirements"] = "Basic Requirements is required"
+		}
+
+		if item.RequestType != "IT Product" && item.RequestType != "IT Service" {
+			errorsMap["requestType"] = "Request Type must be either 'IT Product' or 'IT Service'"
+		}
+
+		if strings.TrimSpace(item.RequestDetails) == "" {
+			errorsMap["requestDetails"] = "Request Details is required"
 		}
 
 		if item.AlternatePhone != "" {
