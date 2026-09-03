@@ -228,11 +228,12 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 	})
 
 	t.Run("Lead Profile - CRUD operations and validation", func(t *testing.T) {
-		// Test Lead creation with the new fields
+		ts := time.Now().UnixNano()
+		reqDetails := "We require a comprehensive CRM solution for our sales team with full lead lifecycle and activities management word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
 		req := models.CreateLeadRequest{
-			Company:                  "Profile Test Comp",
+			Company:                  fmt.Sprintf("Profile Test Comp %d", ts),
 			Contact:                  "Jane Doe",
-			Email:                    "profile@test.com",
+			Email:                    fmt.Sprintf("profile_%d@test.com", ts),
 			Phone:                    "9876543210",
 			OfficePhone:              "9123456780",
 			Owner:                    "KAM One",
@@ -240,6 +241,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			Status:                   "Open",
 			Sentiment:                "Positive",
 			Priority:                 "High",
+			RequestType:              "IT Product",
+			RequestDetails:           reqDetails,
 			LifecycleTemplate:        "Enterprise Sales",
 			KamName:                  "John Doe",
 			Designation:              "VP of Sales",
@@ -303,12 +306,14 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 	})
 
 	t.Run("Bulk Create Leads - Validation and Duplicates", func(t *testing.T) {
+		p := fmt.Sprintf("%d", time.Now().UnixNano())
+		reqDetails := "We require a comprehensive CRM solution for our sales team with full lead lifecycle and activities management word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
 		req := models.BulkCreateLeadsRequest{
 			Leads: []models.CreateLeadRequest{
 				{
-					Company:            "Unique Company A",
+					Company:            fmt.Sprintf("Unique Comp A %s", p),
 					Contact:            "John A",
-					Email:              "johnA@company.com",
+					Email:              fmt.Sprintf("johnA_%s@company.com", p),
 					Phone:              "9876543210",
 					OfficePhone:        "9123456780",
 					OfficePhoneCountry: "+91",
@@ -317,13 +322,15 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					RequestType:        "IT Product",
+					RequestDetails:     reqDetails,
 					KamName:            "KAM One",
 					BasicRequirements:  "Some requirements",
 				},
 				{
-					Company:            "Unique Company B",
+					Company:            fmt.Sprintf("Unique Comp B %s", p),
 					Contact:            "John B",
-					Email:              "johnA@company.com", // Duplicate email
+					Email:              fmt.Sprintf("johnA_%s@company.com", p), // Duplicate email in request
 					Phone:              "9876543210",
 					OfficePhone:        "9123456780",
 					OfficePhoneCountry: "+91",
@@ -332,13 +339,15 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					RequestType:        "IT Product",
+					RequestDetails:     reqDetails,
 					KamName:            "KAM One",
 					BasicRequirements:  "Some requirements",
 				},
 				{
-					Company:            "Unique Company C",
+					Company:            fmt.Sprintf("Unique Comp C %s", p),
 					Contact:            "John C",
-					Email:              "johnC@company.com",
+					Email:              fmt.Sprintf("johnC_%s@company.com", p),
 					Phone:              "123", // Invalid phone
 					OfficePhone:        "9123456780",
 					OfficePhoneCountry: "+91",
@@ -347,13 +356,15 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					RequestType:        "IT Product",
+					RequestDetails:     reqDetails,
 					KamName:            "KAM One",
 					BasicRequirements:  "Some requirements",
 				},
 				{
-					Company:            "Unique Company A", // Case-insensitive duplicate company in request
+					Company:            fmt.Sprintf("Unique Comp A %s", p), // Duplicate company in request
 					Contact:            "John A2",
-					Email:              "johnA2@company.com",
+					Email:              fmt.Sprintf("johnA2_%s@company.com", p),
 					Phone:              "9876543210",
 					OfficePhone:        "9123456780",
 					OfficePhoneCountry: "+91",
@@ -362,6 +373,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 					Status:             "Open",
 					Sentiment:          "Positive",
 					Priority:           "High",
+					RequestType:        "IT Product",
+					RequestDetails:     reqDetails,
 					KamName:            "KAM One",
 					BasicRequirements:  "Some requirements",
 				},

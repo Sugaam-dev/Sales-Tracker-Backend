@@ -65,6 +65,7 @@ func (Lead) TableName() string { return "leads" }
 type Activity struct {
 	ID        uint       `gorm:"primaryKey"`
 	LeadID    string     `gorm:"index;not null;type:varchar"`
+	Rep       *uuid.UUID `gorm:"type:uuid;index" json:"rep,omitempty"`
 	Type      string     `gorm:"not null"`
 	Desc      string     `gorm:"not null"`
 	Outcome   string
