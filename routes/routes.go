@@ -15,6 +15,7 @@ func RegisterRoutes(
 	authController *controllers.AuthController,
 	leadController *controllers.LeadController,
 	commercialController *controllers.CommercialController,
+	analyticsController *controllers.AnalyticsController,
 	jwtManager *helpers.JWTManager,
 ) {
 	router.GET("/health", func(c *gin.Context) {
@@ -24,6 +25,7 @@ func RegisterRoutes(
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
 	v1.RegisterLeadRoutes(apiV1, leadController, jwtManager)
 	v1.RegisterCommercialRoutes(apiV1, commercialController, jwtManager)
+	v1.RegisterAnalyticsRoutes(apiV1, analyticsController, jwtManager)
 	apiV1.POST("/users", middleware.AuthMiddleware(jwtManager), authController.CreateUser)
 
 	// Lead Module routes from Sahil
