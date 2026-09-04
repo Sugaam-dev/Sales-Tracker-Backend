@@ -403,6 +403,7 @@ func (ctrl *LeadController) GetActivities(c *gin.Context) {
 	query.Geography = c.Query("geography")
 	query.Industry = c.Query("industry")
 	query.DealSize = c.Query("deal_size")
+	query.DueStatus = c.Query("due_status")
 
 	resp, err := ctrl.service.GetActivities(c.Request.Context(), query)
 	if err != nil {

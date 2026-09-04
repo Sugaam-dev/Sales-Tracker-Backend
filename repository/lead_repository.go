@@ -379,6 +379,12 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetAct
 		argCount++
 	}
 
+	if q.DueStatus == "overdue" {
+		whereClauses = append(whereClauses, "a.due_date < CURRENT_DATE AND a.completed = FALSE")
+	} else if q.DueStatus == "upcoming" {
+		whereClauses = append(whereClauses, "a.due_date >= CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE")
+	}
+
 	// Query 2: Type Counts (unaffected by selected type filter and unaffected by pagination)
 	typeCountWhereSQL := ""
 	if len(whereClauses) > 0 {
@@ -470,7 +476,8 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetAct
 
 	dataQuery := `SELECT a.id, a.type, a."desc", a.outcome, a.due_date, a.completed, a.created_at, 
 						 l.contact, l.lead_id, l.company, l.region, l.industry, l.size,
-						 u.name, u.email
+						 u.name, u.email,
+						 l.priority, l.status
 				  FROM activities a 
 				  INNER JOIN leads l ON a.lead_id = l.lead_id 
 				  LEFT JOIN users u ON a.rep = u.id` + dataWhereSQL + limitOffsetSQL
@@ -492,11 +499,13 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetAct
 		var leadName, geography, industry, dealSize *string
 		var leadID, company string
 		var userName, userEmail *string
+		var priority, status *string
 
 		err := rows.Scan(
 			&id, &actType, &desc, &outcome, &dueDate, &completed, &createdAt,
 			&leadName, &leadID, &company, &geography, &industry, &dealSize,
 			&userName, &userEmail,
+			&priority, &status,
 		)
 		if err != nil {
 			return nil, 0, typeCounts, fmt.Errorf("repo: scan activity feed: %w", err)
@@ -530,6 +539,8 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetAct
 			DealSize:  dealSize,
 			DueDate:   dueDateStr,
 			Completed: completed,
+			Priority:  priority,
+			Status:    status,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -574,7 +585,7 @@ func (r *leadRepository) GetActivitiesSummary(ctx context.Context) (*models.Acti
 		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = TRUE), 0) AS velocity_today_completed,
 		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = FALSE), 0) AS velocity_today_planned,
 		COALESCE(COUNT(*) FILTER (WHERE a.due_date < CURRENT_DATE AND a.completed = FALSE), 0) AS overdue_count,
-		COALESCE(COUNT(*) FILTER (WHERE a.due_date > CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE), 0) AS upcoming_count
+		COALESCE(COUNT(*) FILTER (WHERE a.due_date >= CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE), 0) AS upcoming_count
 	FROM activities a
 	INNER JOIN leads l ON a.lead_id = l.lead_id
 	WHERE l.deleted_at IS NULL`
