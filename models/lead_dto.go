@@ -87,6 +87,7 @@ type GetActivitiesQuery struct {
 	Geography string `form:"geography"`
 	Industry  string `form:"industry"`
 	DealSize  string `form:"deal_size"`
+	DueStatus string `form:"due_status"`
 	Page      int    `form:"page,default=1"`
 	Limit     int    `form:"limit,default=20"`
 }
@@ -106,6 +107,8 @@ type ActivityFeedItemResponse struct {
 	DealSize  *string `json:"dealSize,omitempty"`
 	DueDate   *string `json:"dueDate,omitempty"`
 	Completed bool    `json:"completed"`
+	Priority  *string `json:"priority,omitempty"`
+	Status    *string `json:"status,omitempty"`
 }
 
 type ActivityTypeCounts struct {
