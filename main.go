@@ -97,6 +97,11 @@ func main() {
 	commService := services.NewCommercialService(commRepo, leadRepo, userRepo)
 	commController := controllers.NewCommercialController(commService, log)
 
+	// Analytics Module dependencies
+	analyticsRepo := repository.NewAnalyticsRepository(db, gormDB)
+	analyticsService := services.NewAnalyticsService(analyticsRepo, leadRepo)
+	analyticsController := controllers.NewAnalyticsController(analyticsService, log)
+
 	// Configure routing engine.
 	if cfg.Server.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -107,7 +112,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, leadController, commController, jwtManager)
+	routes.RegisterRoutes(router, authController, leadController, commController, analyticsController, jwtManager)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
