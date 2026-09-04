@@ -341,6 +341,12 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS basic_requirements TEXT`,
 		`ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT`,
 
+		// 000009_expand_activities_table
+		`ALTER TABLE activities ADD COLUMN IF NOT EXISTS rep UUID REFERENCES users(id) ON DELETE SET NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(type)`,
+		`CREATE INDEX IF NOT EXISTS idx_activities_created_at ON activities(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_activities_rep ON activities(rep)`,
+
 		// Commercial Estimations
 		`CREATE TABLE IF NOT EXISTS commercial_estimations (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

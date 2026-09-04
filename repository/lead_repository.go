@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,6 +37,10 @@ type LeadRepository interface {
 	CheckCompanyExists(company string) (bool, error)
 	CheckUserActive(name string) (bool, error)
 	CheckStageExistsCaseInsensitive(stage string) (bool, string, error)
+
+	FindActivitiesFeed(ctx context.Context, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error)
+	FindLeadByCompanyOrContact(ctx context.Context, name string) (*models.Lead, error)
+	GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error)
 }
 
 type leadRepository struct {
@@ -326,4 +331,264 @@ func (r *leadRepository) UpdateLeadStatusAndStage(ctx context.Context, leadID st
 			  WHERE lead_id = $4 AND deleted_at IS NULL`
 	_, err := r.pgx.Exec(ctx, query, status, stage, lostReason, leadID)
 	return err
+}
+
+func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error) {
+	var whereClauses []string
+	var args []interface{}
+	argCount := 1
+
+	whereClauses = append(whereClauses, "l.deleted_at IS NULL")
+
+	repFilter := q.Rep
+	if repFilter == "" {
+		repFilter = q.UserID
+	}
+	if repFilter != "" {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("(u.id::text = %s OR u.name ILIKE %s OR u.email ILIKE %s OR a.rep::text = %s)", placeholder, placeholder, placeholder, placeholder))
+		args = append(args, repFilter)
+		argCount++
+	}
+
+	if q.LeadID != "" {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("a.lead_id = %s", placeholder))
+		args = append(args, q.LeadID)
+		argCount++
+	}
+
+	if q.Geography != "" {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("l.region ILIKE %s", placeholder))
+		args = append(args, "%"+q.Geography+"%")
+		argCount++
+	}
+
+	if q.Industry != "" {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("l.industry ILIKE %s", placeholder))
+		args = append(args, "%"+q.Industry+"%")
+		argCount++
+	}
+
+	if q.DealSize != "" {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("l.size ILIKE %s", placeholder))
+		args = append(args, "%"+q.DealSize+"%")
+		argCount++
+	}
+
+	// Query 2: Type Counts (unaffected by selected type filter and unaffected by pagination)
+	typeCountWhereSQL := ""
+	if len(whereClauses) > 0 {
+		typeCountWhereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	typeCountsQuery := `SELECT a.type, COUNT(*) 
+						FROM activities a 
+						INNER JOIN leads l ON a.lead_id = l.lead_id 
+						LEFT JOIN users u ON a.rep = u.id` + typeCountWhereSQL + ` GROUP BY a.type`
+
+	var typeCounts models.ActivityTypeCounts
+	typeRows, err := r.pgx.Query(ctx, typeCountsQuery, args...)
+	if err != nil {
+		return nil, 0, typeCounts, fmt.Errorf("repo: type counts: %w", err)
+	}
+	defer typeRows.Close()
+
+	for typeRows.Next() {
+		var rawType string
+		var cnt int64
+		if err := typeRows.Scan(&rawType, &cnt); err == nil {
+			typeCounts.All += cnt
+			normType := strings.ToLower(strings.TrimSpace(rawType))
+			switch normType {
+			case "call":
+				typeCounts.Call += cnt
+			case "email":
+				typeCounts.Email += cnt
+			case "meeting":
+				typeCounts.Meeting += cnt
+			case "demo":
+				typeCounts.Demo += cnt
+			case "linkedin":
+				typeCounts.Linkedin += cnt
+			case "proposal_sent", "proposal sent", "proposalsent":
+				typeCounts.ProposalSent += cnt
+			default:
+				typeCounts.Other += cnt
+			}
+		}
+	}
+
+	// Query 1: Filtered Paginated Data
+	dataWhereClauses := append([]string{}, whereClauses...)
+	dataArgs := append([]interface{}{}, args...)
+	dataArgCount := argCount
+
+	if q.Type != "" {
+		placeholder := fmt.Sprintf("$%d", dataArgCount)
+		dataWhereClauses = append(dataWhereClauses, fmt.Sprintf("LOWER(a.type) = LOWER(%s)", placeholder))
+		dataArgs = append(dataArgs, q.Type)
+		dataArgCount++
+	}
+
+	dataWhereSQL := ""
+	if len(dataWhereClauses) > 0 {
+		dataWhereSQL = " WHERE " + strings.Join(dataWhereClauses, " AND ")
+	}
+
+	countQuery := `SELECT COUNT(*) 
+				   FROM activities a 
+				   INNER JOIN leads l ON a.lead_id = l.lead_id 
+				   LEFT JOIN users u ON a.rep = u.id` + dataWhereSQL
+	var total int64
+	err = r.pgx.QueryRow(ctx, countQuery, dataArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, typeCounts, fmt.Errorf("repo: count activities: %w", err)
+	}
+
+	if total == 0 {
+		return []models.ActivityFeedItemResponse{}, 0, typeCounts, nil
+	}
+
+	page := q.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := q.Limit
+	if limit < 1 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
+	}
+	offset := (page - 1) * limit
+
+	limitOffsetSQL := fmt.Sprintf(" ORDER BY a.created_at DESC LIMIT $%d OFFSET $%d", dataArgCount, dataArgCount+1)
+	dataArgs = append(dataArgs, limit, offset)
+
+	dataQuery := `SELECT a.id, a.type, a."desc", a.outcome, a.due_date, a.completed, a.created_at, 
+						 l.contact, l.lead_id, l.company, l.region, l.industry, l.size,
+						 u.name, u.email
+				  FROM activities a 
+				  INNER JOIN leads l ON a.lead_id = l.lead_id 
+				  LEFT JOIN users u ON a.rep = u.id` + dataWhereSQL + limitOffsetSQL
+
+	rows, err := r.pgx.Query(ctx, dataQuery, dataArgs...)
+	if err != nil {
+		return nil, 0, typeCounts, fmt.Errorf("repo: find activities feed: %w", err)
+	}
+	defer rows.Close()
+
+	var items []models.ActivityFeedItemResponse
+	for rows.Next() {
+		var id uint
+		var actType, desc string
+		var outcome *string
+		var dueDate *time.Time
+		var completed bool
+		var createdAt time.Time
+		var leadName, geography, industry, dealSize *string
+		var leadID, company string
+		var userName, userEmail *string
+
+		err := rows.Scan(
+			&id, &actType, &desc, &outcome, &dueDate, &completed, &createdAt,
+			&leadName, &leadID, &company, &geography, &industry, &dealSize,
+			&userName, &userEmail,
+		)
+		if err != nil {
+			return nil, 0, typeCounts, fmt.Errorf("repo: scan activity feed: %w", err)
+		}
+
+		var repStr *string
+		if userName != nil && *userName != "" {
+			repStr = userName
+		} else if userEmail != nil && *userEmail != "" {
+			repStr = userEmail
+		}
+
+		var dueDateStr *string
+		if dueDate != nil {
+			d := dueDate.Format("2006-01-02")
+			dueDateStr = &d
+		}
+
+		items = append(items, models.ActivityFeedItemResponse{
+			ID:        id,
+			Type:      actType,
+			Desc:      desc,
+			LeadName:  leadName,
+			LeadID:    leadID,
+			Company:   company,
+			Rep:       repStr,
+			Timestamp: createdAt.Format(time.RFC3339),
+			Outcome:   outcome,
+			Geography: geography,
+			Industry:  industry,
+			DealSize:  dealSize,
+			DueDate:   dueDateStr,
+			Completed: completed,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, typeCounts, err
+	}
+
+	return items, total, typeCounts, nil
+}
+
+func (r *leadRepository) FindLeadByCompanyOrContact(ctx context.Context, name string) (*models.Lead, error) {
+	nameTrimmed := strings.TrimSpace(name)
+	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_at, updated_at 
+			  FROM leads 
+			  WHERE (LOWER(company) = LOWER($1) OR LOWER(contact) = LOWER($1)) AND deleted_at IS NULL
+			  ORDER BY created_at DESC LIMIT 1`
+	row := r.pgx.QueryRow(ctx, query, nameTrimmed)
+
+	var l models.Lead
+	err := row.Scan(
+		&l.ID, &l.LeadID, &l.Company, &l.ProjectName, &l.Contact,
+		&l.Email, &l.Phone, &l.PhoneCountry, &l.OfficePhone, &l.OfficePhoneCountry, &l.Owner,
+		&l.Industry, &l.Size, &l.Region, &l.Source, &l.Stage, &l.Status,
+		&l.Sentiment, &l.Priority, &l.Value, &l.LostReason, &l.BestTime,
+		&l.LifecycleTemplate, &l.KamName, &l.Designation, &l.BestTimeToConnect,
+		&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
+		&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
+		&l.RequestDetails, &l.RequestType,
+		&l.CreatedAt, &l.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, helpers.ErrNotFound
+		}
+		return nil, err
+	}
+	return &l, nil
+}
+
+func (r *leadRepository) GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error) {
+	query := `SELECT 
+		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE), 0) AS velocity_today_logged,
+		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = TRUE), 0) AS velocity_today_completed,
+		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = FALSE), 0) AS velocity_today_planned,
+		COALESCE(COUNT(*) FILTER (WHERE a.due_date < CURRENT_DATE AND a.completed = FALSE), 0) AS overdue_count,
+		COALESCE(COUNT(*) FILTER (WHERE a.due_date > CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE), 0) AS upcoming_count
+	FROM activities a
+	INNER JOIN leads l ON a.lead_id = l.lead_id
+	WHERE l.deleted_at IS NULL`
+
+	var s models.ActivitySummaryData
+	err := r.pgx.QueryRow(ctx, query).Scan(
+		&s.VelocityTodayLogged,
+		&s.VelocityTodayCompleted,
+		&s.VelocityTodayPlanned,
+		&s.OverdueCount,
+		&s.UpcomingCount,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("repo: get activities summary: %w", err)
+	}
+	return &s, nil
 }
