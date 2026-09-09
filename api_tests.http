@@ -262,6 +262,24 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 ###
 
 ########################################################
+### Task APIs (Samruddhi)
+########################################################
+
+# 1. Create a Task
+POST http://localhost:8080/api/v1/tasks
+Content-Type: application/json
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+{
+  "text": "Follow-up Call with Horizon Retail",
+  "dueDate": "2026-09-05",
+  "priority": "High"
+}
+
+###
+
+# 2. Get All My Tasks
+GET http://localhost:8080/api/v1/tasks
 ### Dashboard: Get Summary (KPIs & Distributions)
 ########################################################
 
@@ -277,6 +295,19 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 ###
 
+# 3. Update Task Status (completed: true)
+PATCH http://localhost:8080/api/v1/tasks/c514f699-7b06-4423-ae3f-e880b13a88d4/status
+Content-Type: application/json
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+{
+  "completed": true
+}
+
+###
+
+# 4. Delete Task
+DELETE http://localhost:8080/api/v1/tasks/c514f699-7b06-4423-ae3f-e880b13a88d4
 ########################################################
 ### Reports: Get Analytics
 ########################################################
@@ -287,7 +318,16 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 ###
 
+########################################################
+### Report APIs (Samruddhi)
+########################################################
+
+# 5. Get Heat Map Report
+GET http://localhost:8080/api/v1/reports/heat-map
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
 # 2. Reports Analytics Filtered by Date Range & Owner
 GET http://localhost:8080/api/v1/reports/analytics?date_from=2026-01-01&date_to=2026-12-31&owner=S.%20Mishra
 Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
-
+
+

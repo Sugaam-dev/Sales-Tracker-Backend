@@ -84,14 +84,14 @@ type GetCommercialResponse struct {
 
 // UpdateCommercialRequest represents the body for PATCH /leads/:id/commercial.
 type UpdateCommercialRequest struct {
-	Currency                *string                 `json:"currency,omitempty"`
-	BillingType             *string                 `json:"billingType,omitempty"`
-	StartDate               *string                 `json:"startDate,omitempty"`
-	EstimatedDurationMonths *int                    `json:"estimatedDurationMonths,omitempty"`
-	EstimatedEndDate        *string                 `json:"estimatedEndDate,omitempty"`
-	MarkupPercent           *float64                `json:"markupPercent,omitempty"`
-	DiscountPercent         *float64                `json:"discountPercent,omitempty"`
-	ManualSellingPrice      *float64                `json:"manualSellingPrice,omitempty"`
+	Currency                *string                  `json:"currency,omitempty"`
+	BillingType             *string                  `json:"billingType,omitempty"`
+	StartDate               *string                  `json:"startDate,omitempty"`
+	EstimatedDurationMonths *int                     `json:"estimatedDurationMonths,omitempty"`
+	EstimatedEndDate        *string                  `json:"estimatedEndDate,omitempty"`
+	MarkupPercent           *float64                 `json:"markupPercent,omitempty"`
+	DiscountPercent         *float64                 `json:"discountPercent,omitempty"`
+	ManualSellingPrice      *float64                 `json:"manualSellingPrice,omitempty"`
 	Status                  *string                  `json:"status,omitempty"`
 	Resources               *[]CommercialResourceDTO `json:"resources,omitempty"`
 	Expenses                *[]CommercialExpenseDTO  `json:"expenses,omitempty"`

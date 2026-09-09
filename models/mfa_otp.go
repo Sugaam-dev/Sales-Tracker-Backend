@@ -1,8 +1,8 @@
 package models
 
 import (
-	"time"
 	"github.com/google/uuid"
+	"time"
 )
 
 // MFAOtp stores the SHA-256 hash of a 6-digit OTP generated during
