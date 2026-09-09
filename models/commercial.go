@@ -21,7 +21,7 @@ const (
 // CommercialEstimation represents the 1:1 commercial estimation attached to a Lead.
 type CommercialEstimation struct {
 	ID                      uuid.UUID            `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	LeadID                  string               `json:"leadId" gorm:"type:varchar;uniqueIndex;not null"`
+	LeadID                  string               `json:"leadId" gorm:"type:varchar;unique;not null"`
 	Currency                string               `json:"currency" gorm:"type:varchar(3);not null;default:'USD'"`
 	BillingType             string               `json:"billingType" gorm:"type:varchar(50);not null;default:'T&M'"`
 	StartDate               time.Time            `json:"startDate" gorm:"type:date;not null"`

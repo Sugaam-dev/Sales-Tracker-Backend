@@ -42,8 +42,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 	leadService := NewLeadService(leadRepo, userRepo)
 
 	// Clean up existing test data
-	_, _ = pool.Exec(ctx, "DELETE FROM activities")
-	_, _ = pool.Exec(ctx, "DELETE FROM leads")
+	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id LIKE 'L-9%' OR lead_id LIKE 'L-ACT-%'")
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id LIKE 'L-9%' OR email LIKE 'test_%' OR email LIKE '%@pmrgsolution.com'")
 	_, _ = pool.Exec(ctx, "DELETE FROM users WHERE email LIKE 'test_%'")
 
 	// Setup users
