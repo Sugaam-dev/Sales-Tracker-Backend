@@ -20,4 +20,13 @@ func RegisterLeadRoutes(rg *gin.RouterGroup, leadController *controllers.LeadCon
 		leads.POST("/:id/activities", leadController.CreateActivity)
 		leads.POST("/bulk", leadController.BulkCreateLeads)
 	}
+
+	activities := rg.Group("/activities")
+	activities.Use(middleware.AuthMiddleware(jwtManager))
+	{
+		activities.GET("", leadController.GetActivities)
+		activities.POST("", leadController.LogActivity)
+		activities.GET("/summary", leadController.GetActivitiesSummary)
+		activities.PATCH("/:id/complete", leadController.CompleteActivity)
+	}
 }

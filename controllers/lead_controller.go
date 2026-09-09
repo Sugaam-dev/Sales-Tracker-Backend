@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
@@ -366,4 +367,111 @@ func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
 	}
 
 	c.JSON(status, resp)
+}
+
+func (ctrl *LeadController) GetActivities(c *gin.Context) {
+	var query models.GetActivitiesQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Invalid query parameters")
+		return
+	}
+
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "20")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "page must be greater than or equal to 1")
+		return
+	}
+	query.Page = page
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "limit must be between 1 and 100")
+		return
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query.Limit = limit
+
+	query.Type = c.Query("type")
+	query.UserID = c.Query("user_id")
+	query.Rep = c.Query("rep")
+	query.LeadID = c.Query("lead_id")
+	query.Geography = c.Query("geography")
+	query.Industry = c.Query("industry")
+	query.DealSize = c.Query("deal_size")
+	query.DueStatus = c.Query("due_status")
+
+	resp, err := ctrl.service.GetActivities(c.Request.Context(), query)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	helpers.SuccessResponse(c, http.StatusOK, resp)
+}
+
+func (ctrl *LeadController) LogActivity(c *gin.Context) {
+	val, exists := c.Get("user_id")
+	if !exists {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	userID, ok := val.(uuid.UUID)
+	if !ok {
+		if idStr, isStr := val.(string); isStr {
+			parsed, err := uuid.Parse(idStr)
+			if err != nil {
+				helpers.ErrorResponse(c, http.StatusUnauthorized, "Invalid user identifier in token")
+				return
+			}
+			userID = parsed
+		} else {
+			helpers.ErrorResponse(c, http.StatusUnauthorized, "Invalid user identifier in token")
+			return
+		}
+	}
+
+	userEmail := ""
+	if email, exists := c.Get("email"); exists {
+		userEmail = email.(string)
+	}
+
+	userRole := ""
+	if role, exists := c.Get("role"); exists {
+		userRole = role.(string)
+	}
+
+	var req models.LogActivityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	resp, err := ctrl.service.LogActivity(c.Request.Context(), userID, userRole, userEmail, req)
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (ctrl *LeadController) GetActivitiesSummary(c *gin.Context) {
+	summary, err := ctrl.service.GetActivitiesSummary(c.Request.Context())
+	if err != nil {
+		ctrl.handleServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    summary,
+	})
 }

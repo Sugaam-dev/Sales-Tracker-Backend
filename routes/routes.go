@@ -17,6 +17,7 @@ func RegisterRoutes(
 	commercialController *controllers.CommercialController,
 	taskController *controllers.TaskController,
 	reportController *controllers.ReportController,
+	analyticsController *controllers.AnalyticsController,
 	jwtManager *helpers.JWTManager,
 ) {
 	router.GET("/health", func(c *gin.Context) {
@@ -44,6 +45,7 @@ func RegisterRoutes(
 		reports.GET("/heat-map", reportController.GetHeatMap)
 	}
 
+	v1.RegisterAnalyticsRoutes(apiV1, analyticsController, jwtManager)
 	apiV1.POST("/users", middleware.AuthMiddleware(jwtManager), authController.CreateUser)
 
 	// Lead Module routes from Sahil
@@ -51,5 +53,4 @@ func RegisterRoutes(
 	apiV1.GET("/master/stages", middleware.AuthMiddleware(jwtManager), leadController.GetMasterStages)
 	apiV1.GET("/leads", middleware.AuthMiddleware(jwtManager), leadController.ListLeads)
 	apiV1.GET("/leads/:id", middleware.AuthMiddleware(jwtManager), leadController.GetLead)
-	apiV1.PATCH("/activities/:id/complete", middleware.AuthMiddleware(jwtManager), leadController.CompleteActivity)
 }

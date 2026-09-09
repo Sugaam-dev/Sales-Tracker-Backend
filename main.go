@@ -106,6 +106,11 @@ func main() {
 	commService := services.NewCommercialService(commRepo, leadRepo, userRepo)
 	commController := controllers.NewCommercialController(commService, log)
 
+	// Analytics Module dependencies
+	analyticsRepo := repository.NewAnalyticsRepository(db, gormDB)
+	analyticsService := services.NewAnalyticsService(analyticsRepo, leadRepo)
+	analyticsController := controllers.NewAnalyticsController(analyticsService, log)
+
 	// Configure routing engine.
 	if cfg.Server.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -123,6 +128,7 @@ func main() {
 		commController,
 		taskController,
 		reportController,
+		analyticsController,
 		jwtManager,
 	)
 

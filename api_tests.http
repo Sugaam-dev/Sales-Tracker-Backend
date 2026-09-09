@@ -280,6 +280,17 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 # 2. Get All My Tasks
 GET http://localhost:8080/api/v1/tasks
+### Dashboard: Get Summary (KPIs & Distributions)
+########################################################
+
+# 1. Global Dashboard Summary
+GET http://localhost:8080/api/v1/dashboard/summary
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+###
+
+# 2. Dashboard Summary Filtered by Owner and Region
+GET http://localhost:8080/api/v1/dashboard/summary?owner=D.%20Ghosh&region=North%20America
 Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 ###
@@ -297,6 +308,12 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 # 4. Delete Task
 DELETE http://localhost:8080/api/v1/tasks/c514f699-7b06-4423-ae3f-e880b13a88d4
+########################################################
+### Reports: Get Analytics
+########################################################
+
+# 1. Default Reports Analytics (Current Period vs Previous Period)
+GET http://localhost:8080/api/v1/reports/analytics
 Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 ###
@@ -307,4 +324,10 @@ Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
 
 # 5. Get Heat Map Report
 GET http://localhost:8080/api/v1/reports/heat-map
-Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+# 2. Reports Analytics Filtered by Date Range & Owner
+GET http://localhost:8080/api/v1/reports/analytics?date_from=2026-01-01&date_to=2026-12-31&owner=S.%20Mishra
+Authorization: Bearer YOUR_ACCESS_TOKEN_HERE
+
+

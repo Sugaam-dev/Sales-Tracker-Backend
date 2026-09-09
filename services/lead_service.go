@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
@@ -38,6 +40,10 @@ type LeadService interface {
 	CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
 	CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error)
 	BulkCreateLeads(userRole, userEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error)
+
+	GetActivities(ctx context.Context, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error)
+	LogActivity(ctx context.Context, userID uuid.UUID, userRole, userEmail string, req models.LogActivityRequest) (*models.ActivityFeedItemResponse, error)
+	GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error)
 }
 
 type leadService struct {
@@ -478,6 +484,9 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 		updates["lifecycle_template"] = *req.LifecycleTemplate
 	}
 	if req.KamName != nil {
+		if strings.TrimSpace(*req.KamName) == "" {
+			return nil, ErrValidation
+		}
 		updates["kam_name"] = *req.KamName
 	}
 	if req.BestTimeToConnect != nil {
@@ -1192,6 +1201,161 @@ func (s *leadService) GetHeatMap(ctx context.Context) (*models.HeatMapResponse, 
 		StageTotal: stageTotalArr,
 		GrandTotal: grandTotal,
 	}
+	return resp, nil
+}
+
+func (s *leadService) GetActivities(ctx context.Context, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error) {
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.Limit < 1 {
+		query.Limit = 20
+	} else if query.Limit > 100 {
+		query.Limit = 100
+	}
+
+	items, total, typeCounts, err := s.leadRepo.FindActivitiesFeed(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("service: get activities feed: %w", err)
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(query.Limit)))
+	if total == 0 {
+		totalPages = 0
+	}
+
+	pagination := &models.PaginationMetadata{
+		Page:       query.Page,
+		Limit:      query.Limit,
+		Total:      total,
+		TotalPages: totalPages,
+	}
+
+	return &models.ActivitiesFeedResponse{
+		Success:    true,
+		Data:       items,
+		Pagination: pagination,
+		TypeCounts: typeCounts,
+	}, nil
+}
+
+func (s *leadService) LogActivity(ctx context.Context, userID uuid.UUID, userRole, userEmail string, req models.LogActivityRequest) (*models.ActivityFeedItemResponse, error) {
+	var normalizedType string
+	switch strings.ToLower(strings.TrimSpace(req.Type)) {
+	case "call":
+		normalizedType = "Call"
+	case "email":
+		normalizedType = "Email"
+	case "meeting":
+		normalizedType = "Meeting"
+	case "demo":
+		normalizedType = "Demo"
+	case "linkedin":
+		normalizedType = "LinkedIn"
+	case "proposal sent", "proposal_sent", "proposalsent":
+		normalizedType = "Proposal Sent"
+	case "other":
+		normalizedType = "Other"
+	default:
+		return nil, helpers.ErrBadRequest("Invalid activity type. Allowed types: Call, Email, Meeting, Demo, LinkedIn, Proposal Sent, Other")
+	}
+
+	descTrimmed := strings.TrimSpace(req.Desc)
+	if descTrimmed == "" {
+		return nil, helpers.ErrBadRequest("Activity description is required")
+	}
+
+	var parsedDueDate *time.Time
+	if req.DueDate != "" {
+		t, err := time.Parse("2006-01-02", req.DueDate)
+		if err != nil {
+			t2, err2 := time.Parse(time.RFC3339, req.DueDate)
+			if err2 != nil {
+				return nil, helpers.ErrBadRequest("Invalid dueDate format. Use YYYY-MM-DD")
+			}
+			parsedDueDate = &t2
+		} else {
+			parsedDueDate = &t
+		}
+	}
+
+	var lead *models.Lead
+	var err error
+
+	leadIDTrimmed := strings.TrimSpace(req.LeadID)
+	leadNameTrimmed := strings.TrimSpace(req.Lead)
+
+	if leadIDTrimmed != "" {
+		lead, err = s.leadRepo.GetLeadByLeadID(leadIDTrimmed)
+		if err != nil {
+			return nil, helpers.ErrNotFound
+		}
+	} else if leadNameTrimmed != "" {
+		lead, err = s.leadRepo.FindLeadByCompanyOrContact(ctx, leadNameTrimmed)
+		if err != nil {
+			return nil, helpers.ErrNotFound
+		}
+	} else {
+		return nil, helpers.ErrBadRequest("leadId or lead is required")
+	}
+
+	activity := &models.Activity{
+		LeadID:    lead.LeadID,
+		Rep:       &userID,
+		Type:      normalizedType,
+		Desc:      descTrimmed,
+		Outcome:   req.Outcome,
+		DueDate:   parsedDueDate,
+		Completed: false,
+	}
+
+	err = s.leadRepo.CreateActivity(activity)
+	if err != nil {
+		return nil, s.handleDBError(err)
+	}
+
+	var userName *string
+	if name, err := s.leadRepo.GetUserNameByEmail(userEmail); err == nil && name != "" {
+		userName = &name
+	} else if userEmail != "" {
+		userName = &userEmail
+	}
+
+	var dueDateStr *string
+	if parsedDueDate != nil {
+		d := parsedDueDate.Format("2006-01-02")
+		dueDateStr = &d
+	}
+
+	var outcomeStr *string
+	if activity.Outcome != "" {
+		outcomeStr = &activity.Outcome
+	}
+
+	resp := &models.ActivityFeedItemResponse{
+		ID:        activity.ID,
+		Type:      activity.Type,
+		Desc:      activity.Desc,
+		LeadName:  lead.Contact,
+		LeadID:    lead.LeadID,
+		Company:   lead.Company,
+		Rep:       userName,
+		Timestamp: activity.CreatedAt.Format(time.RFC3339),
+		Outcome:   outcomeStr,
+		Geography: lead.Region,
+		Industry:  lead.Industry,
+		DealSize:  lead.Size,
+		DueDate:   dueDateStr,
+		Completed: activity.Completed,
+	}
 
 	return resp, nil
+}
+
+func (s *leadService) GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error) {
+	summary, err := s.leadRepo.GetActivitiesSummary(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("service: get activities summary: %w", err)
+	}
+	return summary, nil
 }
