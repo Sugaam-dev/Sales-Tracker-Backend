@@ -193,26 +193,26 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	val1 := 100000.0
 	val2 := 250000.0
 	lead1 := &models.Lead{
-		LeadID:      "L-1001",
-		Company:     "Acme Corporation",
-		Contact:     strPtr("John Doe"),
-		Priority:    strPtr("High"),
-		Stage:       strPtr("Prospecting"),
-		Owner:       strPtr("test_alice@example.com"),
-		Value:       &val1,
-		CreatedAt:   time.Now().Add(-10 * time.Minute),
+		LeadID:    "L-1001",
+		Company:   "Acme Corporation",
+		Contact:   strPtr("John Doe"),
+		Priority:  strPtr("High"),
+		Stage:     strPtr("Prospecting"),
+		Owner:     strPtr("test_alice@example.com"),
+		Value:     &val1,
+		CreatedAt: time.Now().Add(-10 * time.Minute),
 	}
 	lead2 := &models.Lead{
-		LeadID:      "L-1002",
-		Company:     "Globex Corp",
-		Contact:     strPtr("Jane Smith"),
-		Priority:    strPtr("Low"),
-		Stage:       strPtr("Qualification"),
-		Owner:       strPtr("test_bob@example.com"),
-		Value:       &val2,
-		CreatedAt:   time.Now(),
+		LeadID:    "L-1002",
+		Company:   "Globex Corp",
+		Contact:   strPtr("Jane Smith"),
+		Priority:  strPtr("Low"),
+		Stage:     strPtr("Qualification"),
+		Owner:     strPtr("test_bob@example.com"),
+		Value:     &val2,
+		CreatedAt: time.Now(),
 	}
-	
+
 	// Create raw in DB for testing
 	_, err = pool.Exec(ctx, `INSERT INTO leads (lead_id, company, contact, priority, stage, owner, value, created_at) VALUES
 		($1, $2, $3, $4, $5, $6, $7, $8)`, lead1.LeadID, lead1.Company, lead1.Contact, lead1.Priority, lead1.Stage, lead1.Owner, lead1.Value, lead1.CreatedAt)
@@ -311,7 +311,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 
 	// Clean up and seed one lead for status testing
 	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id = 'L-9999'")
-	
+
 	_, err = pool.Exec(ctx, `INSERT INTO leads (lead_id, company, contact, priority, stage, status, value) VALUES
 		('L-9999', 'Lifecycle Corp', 'Test Contact', 'High', 'Prospecting', 'Open', 50000.0)`)
 	if err != nil {
@@ -415,7 +415,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("JWT_SECRET") == "" {
 		os.Setenv("JWT_SECRET", "super-secret-key-32-characters-long")
 	}
-	
+
 	code := m.Run()
 
 	os.Unsetenv("APP_ENV")

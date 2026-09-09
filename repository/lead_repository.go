@@ -28,6 +28,7 @@ type LeadRepository interface {
 	FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
 	FindByID(ctx context.Context, leadID string) (*models.Lead, error)
 	UpdateLeadStatusAndStage(ctx context.Context, leadID string, status, stage string, lostReason *string) error
+	GetHeatMapAggregation(ctx context.Context) ([]models.LeadAggregationRow, error)
 
 	CreateActivity(activity *models.Activity) error
 	GetActivityByID(id uint) (*models.Activity, error)
@@ -326,4 +327,31 @@ func (r *leadRepository) UpdateLeadStatusAndStage(ctx context.Context, leadID st
 			  WHERE lead_id = $4 AND deleted_at IS NULL`
 	_, err := r.pgx.Exec(ctx, query, status, stage, lostReason, leadID)
 	return err
+}
+
+func (r *leadRepository) GetHeatMapAggregation(ctx context.Context) ([]models.LeadAggregationRow, error) {
+	query := `
+		SELECT COALESCE(owner, '') AS owner, COALESCE(stage, '') AS stage, COALESCE(SUM(value), 0) AS value, COUNT(id) AS leads
+		FROM leads
+		WHERE deleted_at IS NULL
+		GROUP BY owner, stage
+	`
+	rows, err := r.pgx.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []models.LeadAggregationRow
+	for rows.Next() {
+		var row models.LeadAggregationRow
+		if err := rows.Scan(&row.Owner, &row.Stage, &row.Value, &row.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }

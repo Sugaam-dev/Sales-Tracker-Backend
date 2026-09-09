@@ -33,7 +33,7 @@ func main() {
 
 	fmt.Printf("User found: %s\n", email)
 	fmt.Printf("Stored hash (first 30 chars): %s...\n", storedHash[:30])
-	
+
 	match := helpers.ComparePassword(password, storedHash)
 	fmt.Printf("Password 'Welcome@123' matches: %v\n", match)
 

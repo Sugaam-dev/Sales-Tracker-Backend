@@ -7,9 +7,9 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	"crm-auth-service/helpers"
 	"crm-auth-service/models"
@@ -33,6 +33,7 @@ type LeadService interface {
 	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
 	ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
 	GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error)
+	GetHeatMap(ctx context.Context) (*models.HeatMapResponse, error)
 
 	CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
 	CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error)
@@ -1117,4 +1118,80 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 		Created: created,
 		Failed:  failed,
 	}, nil
+}
+
+func (s *leadService) GetHeatMap(ctx context.Context) (*models.HeatMapResponse, error) {
+	rows, err := s.leadRepo.GetHeatMapAggregation(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	stages, err := s.leadRepo.FindStages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var stageNames []string
+	for _, st := range stages {
+		stageNames = append(stageNames, st.Name)
+	}
+
+	repMap := make(map[string]map[string]models.HeatMapCell)
+	stageTotals := make(map[string]models.HeatMapCell)
+	grandTotal := models.HeatMapCell{Stage: "Grand Total"}
+
+	for _, st := range stageNames {
+		stageTotals[st] = models.HeatMapCell{Stage: st, Value: 0, Leads: 0}
+	}
+
+	for _, row := range rows {
+		if _, ok := repMap[row.Owner]; !ok {
+			repMap[row.Owner] = make(map[string]models.HeatMapCell)
+			for _, st := range stageNames {
+				repMap[row.Owner][st] = models.HeatMapCell{Stage: st, Value: 0, Leads: 0}
+			}
+		}
+
+		if _, ok := repMap[row.Owner][row.Stage]; ok {
+			cell := repMap[row.Owner][row.Stage]
+			cell.Value += row.Value
+			cell.Leads += row.Count
+			repMap[row.Owner][row.Stage] = cell
+
+			stTotal := stageTotals[row.Stage]
+			stTotal.Value += row.Value
+			stTotal.Leads += row.Count
+			stageTotals[row.Stage] = stTotal
+
+			grandTotal.Value += row.Value
+			grandTotal.Leads += row.Count
+		}
+	}
+
+	var repRows []models.HeatMapRepRow
+	for rep, stMap := range repMap {
+		repRow := models.HeatMapRepRow{Rep: rep}
+		repTotal := models.HeatMapCell{Stage: "Total", Value: 0, Leads: 0}
+		for _, stName := range stageNames {
+			cell := stMap[stName]
+			repRow.Stages = append(repRow.Stages, cell)
+			repTotal.Value += cell.Value
+			repTotal.Leads += cell.Leads
+		}
+		repRow.Total = repTotal
+		repRows = append(repRows, repRow)
+	}
+
+	var stageTotalArr []models.HeatMapCell
+	for _, stName := range stageNames {
+		stageTotalArr = append(stageTotalArr, stageTotals[stName])
+	}
+
+	resp := &models.HeatMapResponse{
+		Reps:       repRows,
+		StageTotal: stageTotalArr,
+		GrandTotal: grandTotal,
+	}
+
+	return resp, nil
 }
