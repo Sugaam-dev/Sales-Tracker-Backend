@@ -44,7 +44,7 @@ func (r *userEmailOTPRepository) FindValid(ctx context.Context, userID uuid.UUID
 	query := `SELECT id, user_id, otp_hash, used, expires_at, created_at
 			  FROM mfa_otps
 			  WHERE user_id = $1 AND otp_hash = $2 AND used = FALSE AND expires_at > NOW()`
-	
+
 	var otp models.MFAOtp
 	err := r.db.QueryRow(ctx, query, userID, otpHash).
 		Scan(&otp.ID, &otp.UserID, &otp.OTPHash, &otp.Used, &otp.ExpiresAt, &otp.CreatedAt)

@@ -516,7 +516,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, mfaPendingToken, otp string
 	}
 
 	otpHash := helpers.HashOTP(otp)
-	
+
 	// Ensure to use FindValid from the repo handling mfa_otps.
 	otpRecord, err := s.otpRepo.FindValid(ctx, claims.UserID, otpHash)
 	if err != nil {
@@ -796,8 +796,7 @@ func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, passw
 		EmailVerified:  user.EmailVerified,
 		MobileVerified: user.MobileVerified,
 	}, nil
-} 
-
+}
 
 func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string, currentUserID uuid.UUID) error {
 	tokenHash := helpers.HashRefreshToken(rawRefreshToken)
@@ -817,4 +816,4 @@ func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string, curren
 		return fmt.Errorf("services: revoke session: %w", err)
 	}
 	return nil
-} 
+}

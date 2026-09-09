@@ -319,7 +319,7 @@ func (ac *AuthController) Logout(c *gin.Context) {
 		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	
+
 	var req struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
 	}
@@ -352,7 +352,7 @@ func (ac *AuthController) CreateUser(c *gin.Context) {
 		Role     string `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-				helpers.ErrorResponse(c, http.StatusBadRequest, "Missing or invalid payload fields")
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Missing or invalid payload fields")
 		return
 	}
 

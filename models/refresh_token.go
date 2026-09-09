@@ -1,8 +1,8 @@
 package models
 
 import (
-	"time"
 	"github.com/google/uuid"
+	"time"
 )
 
 // RefreshToken stores the SHA-256 hash of an issued refresh token. The
