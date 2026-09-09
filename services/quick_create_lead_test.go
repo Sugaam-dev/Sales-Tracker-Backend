@@ -86,6 +86,17 @@ func TestQuickCreateLeadValidationUnits(t *testing.T) {
 		if err == nil {
 			t.Error("Expected error for empty phone, got nil")
 		}
+
+		// Non-numeric characters should fail
+		err = helpers.ValidatePhoneNumber("sjgdy525865", "+91")
+		if err == nil || !strings.Contains(err.Error(), "must contain only numbers") {
+			t.Errorf("Expected only numbers error for 'sjgdy525865', got %v", err)
+		}
+
+		err = helpers.ValidatePhoneNumber("nhtfhgk", "+91")
+		if err == nil || !strings.Contains(err.Error(), "must contain only numbers") {
+			t.Errorf("Expected only numbers error for 'nhtfhgk', got %v", err)
+		}
 	})
 }
 

@@ -91,8 +91,8 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	leadService := NewLeadService(leadRepo, userRepo)
 
 	// Clean up existing test data safely
-	_, _ = pool.Exec(ctx, "DELETE FROM activities")
-	_, _ = pool.Exec(ctx, "DELETE FROM leads")
+	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id LIKE 'L-9%'")
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id LIKE 'L-9%' OR email LIKE 'test_%'")
 	_, _ = pool.Exec(ctx, "DELETE FROM users WHERE email LIKE 'test_%'")
 
 	// 5. Test API 1: GetCurrentUsers
