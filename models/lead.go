@@ -18,12 +18,12 @@ func (LeadStage) TableName() string { return "lead_stages" }
 
 type Lead struct {
 	ID                       uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	LeadID                   string     `json:"leadId" gorm:"type:varchar;uniqueIndex;not null"`
+	LeadID                   string     `json:"leadId" gorm:"type:varchar;unique;not null"`
 	Company                  string     `json:"company" gorm:"type:varchar;not null"`
 	ProjectName              *string    `json:"projectName" gorm:"type:varchar"`
 	Designation              *string    `json:"designation" gorm:"type:varchar"`
 	Contact                  *string    `json:"contact" gorm:"type:varchar"`
-	Email                    *string    `json:"email" gorm:"type:varchar;uniqueIndex"`
+	Email                    *string    `json:"email" gorm:"type:varchar;unique"`
 	Phone                    *string    `json:"phone" gorm:"type:varchar"`
 	PhoneCountry             *string    `json:"countryCode,omitempty" gorm:"column:phone_country;type:varchar"`
 	OfficePhone              *string    `json:"officePhone" gorm:"type:varchar"`
