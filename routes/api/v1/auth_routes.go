@@ -43,4 +43,6 @@ func RegisterAuthRoutes(rg *gin.RouterGroup, authController *controllers.AuthCon
 	auth.GET("/sso/callback", authController.SSOCallback)
 	auth.POST("/mfa/enable", middleware.AuthMiddleware(jwtManager), authController.EnableMFA)
 	auth.POST("/mfa/disable", middleware.AuthMiddleware(jwtManager), authController.DisableMFA)
+	auth.POST("/change-password", middleware.AuthMiddleware(jwtManager), authController.ChangePassword)
+	auth.GET("/me/permissions", middleware.AuthMiddleware(jwtManager), authController.GetMyPermissions)
 }

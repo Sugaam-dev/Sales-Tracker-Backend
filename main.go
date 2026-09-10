@@ -45,11 +45,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Migrate Lead & Commercial models
+	// Migrate Lead, Commercial, and RBAC models
 	gormDB.AutoMigrate(
 		&models.Lead{}, &models.Activity{}, &models.LeadStage{},
 		&models.CommercialEstimation{}, &models.CommercialResource{},
 		&models.CommercialExpense{}, &models.SDLCAllocation{},
+		&models.User{}, &models.LeaderDelegation{},
 	)
 	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
 
@@ -64,7 +65,12 @@ func main() {
 
 	// Dependency Injection: Utility helpers.
 	jwtManager := helpers.NewJWTManager(cfg.JWT)
-	emailService := helpers.NewConsoleEmailService(log)
+	emailService := helpers.NewEmailService(helpers.SMTPConfig{
+		Host:     cfg.SMTP.Host,
+		Port:     cfg.SMTP.Port,
+		Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password,
+	}, log)
 	smsService := helpers.NewConsoleSMSService(log)
 	rateLimiter := middleware.NewRateLimiter(cfg.Rate.MaxAttempts, cfg.Rate.Window)
 
@@ -99,7 +105,7 @@ func main() {
 
 	// Analytics Module dependencies
 	analyticsRepo := repository.NewAnalyticsRepository(db, gormDB)
-	analyticsService := services.NewAnalyticsService(analyticsRepo, leadRepo)
+	analyticsService := services.NewAnalyticsService(analyticsRepo, leadRepo, userRepo)
 	analyticsController := controllers.NewAnalyticsController(analyticsService, log)
 
 	// Configure routing engine.
@@ -112,7 +118,7 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, leadController, commController, analyticsController, jwtManager)
+	routes.RegisterRoutes(router, authController, leadController, commController, analyticsController, jwtManager, userRepo)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {

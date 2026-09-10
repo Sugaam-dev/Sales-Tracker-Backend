@@ -127,7 +127,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Admin can create for any lead
-		resp, err := leadService.CreateActivity("L-9001", "admin", "test_admin@pmrgsolution.com", req)
+		resp, err := leadService.CreateActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", "L-9001", req)
 		if err != nil {
 			t.Fatalf("Admin failed to create activity: %v", err)
 		}
@@ -136,13 +136,13 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Owner (KAM One) can create
-		_, err = leadService.CreateActivity("L-9001", "sales_executive", "test_kam1@pmrgsolution.com", req)
+		_, err = leadService.CreateActivity(ctx, kamUser1.ID, "sales_executive", "test_kam1@pmrgsolution.com", "L-9001", req)
 		if err != nil {
 			t.Fatalf("Owner failed to create activity: %v", err)
 		}
 
 		// Non-owner (KAM Two) cannot create
-		_, err = leadService.CreateActivity("L-9001", "sales_executive", "test_kam2@pmrgsolution.com", req)
+		_, err = leadService.CreateActivity(ctx, kamUser2.ID, "sales_executive", "test_kam2@pmrgsolution.com", "L-9001", req)
 		if err != ErrUnauthorized {
 			t.Errorf("Expected ErrUnauthorized, got %v", err)
 		}
@@ -154,13 +154,13 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			Type: "Call",
 			Desc: "Callback",
 		}
-		_, err := leadService.CreateActivity("L-9999", "admin", "test_admin@pmrgsolution.com", req)
+		_, err := leadService.CreateActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", "L-9999", req)
 		if err != ErrNotFound {
 			t.Errorf("Expected ErrNotFound for non-existent lead, got %v", err)
 		}
 
 		// Soft-deleted Lead
-		_, err = leadService.CreateActivity("L-9002", "admin", "test_admin@pmrgsolution.com", req)
+		_, err = leadService.CreateActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", "L-9002", req)
 		if err != ErrNotFound {
 			t.Errorf("Expected ErrNotFound for soft-deleted lead, got %v", err)
 		}
@@ -171,7 +171,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			Desc:    "Callback",
 			DueDate: "invalid-date",
 		}
-		_, err = leadService.CreateActivity("L-9001", "admin", "test_admin@pmrgsolution.com", reqInvalidDate)
+		_, err = leadService.CreateActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", "L-9001", reqInvalidDate)
 		if err != ErrValidation {
 			t.Errorf("Expected ErrValidation for invalid dueDate, got %v", err)
 		}
@@ -188,13 +188,13 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		_ = gormDB.Create(act)
 
 		// Non-owner KAM Two cannot update
-		_, err := leadService.CompleteActivity(act.ID, "sales_executive", "test_kam2@pmrgsolution.com", true)
+		_, err := leadService.CompleteActivity(ctx, kamUser2.ID, "sales_executive", "test_kam2@pmrgsolution.com", act.ID, true)
 		if err != ErrUnauthorized {
 			t.Errorf("Expected ErrUnauthorized for non-owner, got %v", err)
 		}
 
 		// Owner KAM One can update
-		resp, err := leadService.CompleteActivity(act.ID, "sales_executive", "test_kam1@pmrgsolution.com", true)
+		resp, err := leadService.CompleteActivity(ctx, kamUser1.ID, "sales_executive", "test_kam1@pmrgsolution.com", act.ID, true)
 		if err != nil {
 			t.Fatalf("Owner failed to complete activity: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Idempotent test: complete again
-		resp2, err := leadService.CompleteActivity(act.ID, "sales_executive", "test_kam1@pmrgsolution.com", true)
+		resp2, err := leadService.CompleteActivity(ctx, kamUser1.ID, "sales_executive", "test_kam1@pmrgsolution.com", act.ID, true)
 		if err != nil {
 			t.Fatalf("Owner failed on duplicate complete: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Admin can change to false
-		resp3, err := leadService.CompleteActivity(act.ID, "admin", "test_admin@pmrgsolution.com", false)
+		resp3, err := leadService.CompleteActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", act.ID, false)
 		if err != nil {
 			t.Fatalf("Admin failed to set completed = false: %v", err)
 		}
@@ -221,7 +221,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Non-existent activity
-		_, err = leadService.CompleteActivity(9999, "admin", "test_admin@pmrgsolution.com", true)
+		_, err = leadService.CompleteActivity(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", 9999, true)
 		if err != ErrNotFound {
 			t.Errorf("Expected ErrNotFound for invalid activity ID, got %v", err)
 		}
@@ -258,7 +258,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			Notes:                    "Internal notes",
 		}
 
-		leadResp, err := leadService.CreateLead(req)
+		leadResp, err := leadService.CreateLead(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", req)
 		if err != nil {
 			t.Fatalf("Failed to create Lead with Profile fields: %v", err)
 		}
@@ -274,7 +274,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		}
 
 		// Test GORM fetching
-		fetched, err := leadService.GetLead(ctx, leadResp.ID)
+		fetched, err := leadService.GetLead(ctx, adminUser.ID, "admin", leadResp.ID)
 		if err != nil {
 			t.Fatalf("Failed to fetch lead: %v", err)
 		}
@@ -287,7 +287,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			KamName:           strPtr("Jane Smith"),
 			BasicRequirements: strPtr("Updated basic requirements"),
 		}
-		updated, err := leadService.UpdateLead(leadResp.ID, "admin", "test_admin@pmrgsolution.com", updateReq)
+		updated, err := leadService.UpdateLead(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", leadResp.ID, updateReq)
 		if err != nil {
 			t.Fatalf("Failed to update Lead: %v", err)
 		}
@@ -299,7 +299,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		invalidUpdate := models.UpdateLeadRequest{
 			KamName: strPtr(""), // Cannot be empty
 		}
-		_, err = leadService.UpdateLead(leadResp.ID, "admin", "test_admin@pmrgsolution.com", invalidUpdate)
+		_, err = leadService.UpdateLead(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", leadResp.ID, invalidUpdate)
 		if err == nil {
 			t.Error("Expected error when updating KamName to empty, got nil")
 		}
@@ -381,7 +381,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 			},
 		}
 
-		resp, err := leadService.BulkCreateLeads("admin", "test_admin@pmrgsolution.com", req)
+		resp, err := leadService.BulkCreateLeads(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", req)
 		if err != nil {
 			t.Fatalf("Bulk creation failed completely: %v", err)
 		}
@@ -432,7 +432,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 						},
 					},
 				}
-				_, _ = leadService.BulkCreateLeads("admin", "test_admin@pmrgsolution.com", req)
+				_, _ = leadService.BulkCreateLeads(ctx, adminUser.ID, "admin", "test_admin@pmrgsolution.com", req)
 			}(i)
 		}
 		wg.Wait()

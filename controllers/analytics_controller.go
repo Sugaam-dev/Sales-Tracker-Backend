@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"crm-auth-service/helpers"
+	"crm-auth-service/middleware"
 	"crm-auth-service/services"
 )
 
@@ -26,19 +27,16 @@ func NewAnalyticsController(service services.AnalyticsService, log *slog.Logger)
 
 // GetDashboardSummary handles GET /api/v1/dashboard/summary
 func (ctrl *AnalyticsController) GetDashboardSummary(c *gin.Context) {
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
-	}
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
+	userID, userRole, userEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	owner := c.Query("owner")
 	region := c.Query("region")
 
-	summary, err := ctrl.service.GetDashboardSummary(c.Request.Context(), userRole, userEmail, owner, region)
+	summary, err := ctrl.service.GetDashboardSummary(c.Request.Context(), userID, userRole, userEmail, owner, region)
 	if err != nil {
 		helpers.RespondError(c, err, ctrl.log)
 		return
@@ -52,13 +50,10 @@ func (ctrl *AnalyticsController) GetDashboardSummary(c *gin.Context) {
 
 // GetReportsAnalytics handles GET /api/v1/reports/analytics
 func (ctrl *AnalyticsController) GetReportsAnalytics(c *gin.Context) {
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
-	}
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
+	userID, userRole, userEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	owner := c.Query("owner")
@@ -103,7 +98,7 @@ func (ctrl *AnalyticsController) GetReportsAnalytics(c *gin.Context) {
 		dateTo = &t
 	}
 
-	analytics, err := ctrl.service.GetReportsAnalytics(c.Request.Context(), userRole, userEmail, dateFrom, dateTo, owner, region)
+	analytics, err := ctrl.service.GetReportsAnalytics(c.Request.Context(), userID, userRole, userEmail, dateFrom, dateTo, owner, region)
 	if err != nil {
 		helpers.RespondError(c, err, ctrl.log)
 		return

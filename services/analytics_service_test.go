@@ -10,6 +10,7 @@ import (
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -37,7 +38,8 @@ func TestDashboardSummaryAndReportsAnalytics(t *testing.T) {
 
 	leadRepo := repository.NewLeadRepository(pool, gormDB)
 	analyticsRepo := repository.NewAnalyticsRepository(pool, gormDB)
-	analyticsService := NewAnalyticsService(analyticsRepo, leadRepo)
+	userRepo := repository.NewUserRepository(pool)
+	analyticsService := NewAnalyticsService(analyticsRepo, leadRepo, userRepo)
 
 	// Clean up any test records
 	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id IN ('L-9901', 'L-9902', 'L-9903', 'L-9904')")
@@ -113,7 +115,7 @@ func TestDashboardSummaryAndReportsAnalytics(t *testing.T) {
 	// TEST 1: GET /api/v1/dashboard/summary (Admin/Global)
 	// ----------------------------------------------------
 	t.Run("Dashboard Summary Global", func(t *testing.T) {
-		summary, err := analyticsService.GetDashboardSummary(ctx, models.RoleAdmin, "admin@example.com", "", "")
+		summary, err := analyticsService.GetDashboardSummary(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "", "")
 		if err != nil {
 			t.Fatalf("GetDashboardSummary returned error: %v", err)
 		}
@@ -153,7 +155,7 @@ func TestDashboardSummaryAndReportsAnalytics(t *testing.T) {
 	// TEST 2: GET /api/v1/dashboard/summary (Filtered by Owner)
 	// ----------------------------------------------------
 	t.Run("Dashboard Summary Filtered by Owner", func(t *testing.T) {
-		summary, err := analyticsService.GetDashboardSummary(ctx, models.RoleAdmin, "admin@example.com", "D. Ghosh", "")
+		summary, err := analyticsService.GetDashboardSummary(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "D. Ghosh", "")
 		if err != nil {
 			t.Fatalf("GetDashboardSummary filtered returned error: %v", err)
 		}
@@ -171,7 +173,7 @@ func TestDashboardSummaryAndReportsAnalytics(t *testing.T) {
 	// TEST 3: GET /api/v1/reports/analytics
 	// ----------------------------------------------------
 	t.Run("Reports Analytics", func(t *testing.T) {
-		analytics, err := analyticsService.GetReportsAnalytics(ctx, models.RoleAdmin, "admin@example.com", nil, nil, "", "")
+		analytics, err := analyticsService.GetReportsAnalytics(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", nil, nil, "", "")
 		if err != nil {
 			t.Fatalf("GetReportsAnalytics returned error: %v", err)
 		}

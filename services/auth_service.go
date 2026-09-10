@@ -112,15 +112,19 @@ func (s *AuthService) Login(ctx context.Context, req models.LoginRequest, client
 	// Reset failure count upon a correct credential submission.
 	s.rateLimiter.Reset(rateLimitKey)
 
-	// If it is the user's first login, route them to onboarding.
-	if user.IsFirstLogin {
-		tempToken, err := s.jwtManager.GenerateTempToken(user.ID)
+	// If it is the user's first login or password change is required, route them to onboarding.
+	if user.IsFirstLogin || user.PasswordChangeRequired {
+		accessToken, err := s.jwtManager.GenerateAccessToken(user.ID, user.Role, user.Email)
 		if err != nil {
-			return nil, fmt.Errorf("services: generate temp token: %w", err)
+			return nil, fmt.Errorf("services: generate access token: %w", err)
 		}
 		return &models.LoginFirstTimeResponse{
-			RequiresOnboarding: true,
-			TempToken:          tempToken,
+			AccessToken:            accessToken,
+			TokenType:              "Bearer",
+			ExpiresIn:              900,
+			FirstTimeLogin:         true,
+			PasswordChangeRequired: true,
+			Message:                "Password change required before proceeding",
 		}, nil
 	}
 
@@ -254,16 +258,33 @@ func (s *AuthService) issueSession(ctx context.Context, user *models.User) (*mod
 		return nil, fmt.Errorf("services: store refresh token: %w", err)
 	}
 
+	var perms []string
+	if user.Role == models.RoleLeader {
+		perms, _ = s.userRepo.GetLeaderPermissions(ctx, user.ID)
+	}
+
+	var managerName *string
+	if user.ManagerID != nil {
+		if m, err := s.userRepo.FindByID(ctx, *user.ManagerID); err == nil && m != nil {
+			managerName = &m.Name
+		}
+	}
+
 	return &models.LoginSuccessResponse{
 		AccessToken:  accessToken,
 		RefreshToken: rawRefreshToken,
 		User: models.UserSummary{
 			ID:             user.ID,
+			Name:           user.Name,
 			Email:          user.Email,
 			Mobile:         user.Mobile,
 			Role:           user.Role,
+			ManagerID:      user.ManagerID,
+			ManagerName:    managerName,
+			Permissions:    perms,
 			EmailVerified:  user.EmailVerified,
 			MobileVerified: user.MobileVerified,
+			IsActive:       user.IsActive,
 		},
 	}, nil
 }
@@ -744,9 +765,32 @@ func (s *AuthService) DisableMFA(ctx context.Context, userID uuid.UUID) error {
 	return s.userRepo.Update(ctx, user)
 }
 
-func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, password, role string) (*models.UserSummary, error) {
+func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, password, role string, managerID *uuid.UUID) (*models.CreateUserResponse, error) {
 	if !models.IsValidRole(role) {
 		return nil, helpers.ErrBadRequest("Invalid role value")
+	}
+
+	// Validate manager assignment based on role
+	var managerName string
+	if role == models.RoleSalesExecutive {
+		if managerID == nil {
+			return nil, helpers.ErrBadRequest("manager_id is required for sales_executive")
+		}
+		mgr, err := s.userRepo.FindByID(ctx, *managerID)
+		if err != nil || mgr == nil {
+			return nil, helpers.ErrBadRequest("assigned manager does not exist")
+		}
+		if !mgr.IsActive {
+			return nil, helpers.ErrBadRequest("assigned manager is inactive")
+		}
+		if mgr.Role != models.RoleSalesManager {
+			return nil, helpers.ErrBadRequest("assigned manager must have sales_manager role")
+		}
+		managerName = mgr.Name
+	} else {
+		// Manager assignment is not applicable for Admin, Leader, or Sales Manager
+		managerID = nil
+		managerName = "Not applicable"
 	}
 
 	// Check if email already exists
@@ -763,7 +807,7 @@ func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, passw
 		}
 	}
 
-	// Hash password
+	// Hash initial temporary password
 	passwordHash, err := helpers.HashPassword(password)
 	if err != nil {
 		return nil, fmt.Errorf("services: hash password: %w", err)
@@ -775,27 +819,84 @@ func (s *AuthService) CreateUser(ctx context.Context, name, email, mobile, passw
 	}
 
 	user := &models.User{
-		Name:         name,
-		Email:        email,
-		Mobile:       mobilePtr,
-		PasswordHash: passwordHash,
-		Role:         role,
-		IsFirstLogin: true,
+		Name:                   name,
+		Email:                  email,
+		Mobile:                 mobilePtr,
+		PasswordHash:           passwordHash,
+		Role:                   role,
+		ManagerID:              managerID,
+		IsFirstLogin:           true,
+		PasswordChangeRequired: true,
+		IsActive:               true,
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, fmt.Errorf("services: create user: %w", err)
 	}
 
-	return &models.UserSummary{
-		ID:             user.ID,
-		Name:           user.Name,
-		Email:          user.Email,
-		Mobile:         user.Mobile,
-		Role:           user.Role,
-		EmailVerified:  user.EmailVerified,
-		MobileVerified: user.MobileVerified,
+	// Send welcome email immediately with temporary credentials
+	displayRole := formatRoleDisplay(role)
+	emailErr := s.emailSvc.SendWelcomeEmail(email, name, password, displayRole, managerName)
+	emailSent := true
+	message := "User created successfully and welcome email sent."
+	if emailErr != nil {
+		// Log technical email error without exposing plaintext password
+		s.log.Error("welcome email delivery failed", "user_id", user.ID, "email", email, "error", emailErr)
+		emailSent = false
+		message = "User created, but welcome email failed."
+	}
+
+	return &models.CreateUserResponse{
+		Success:   true,
+		Message:   message,
+		EmailSent: emailSent,
+		User: &models.AdminCreatedUser{
+			ID:                     user.ID,
+			Name:                   user.Name,
+			Email:                  user.Email,
+			Role:                   user.Role,
+			IsFirstLogin:           user.IsFirstLogin,
+			PasswordChangeRequired: user.PasswordChangeRequired,
+		},
 	}, nil
+}
+
+// ChangePassword changes the authenticated user's password and clears temporary flags.
+func (s *AuthService) ChangePassword(ctx context.Context, userID uuid.UUID, newPassword string) error {
+	if err := helpers.ValidatePasswordStrength(newPassword); err != nil {
+		return err
+	}
+
+	hash, err := helpers.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("services: hash new password: %w", err)
+	}
+
+	if err := s.userRepo.UpdatePassword(ctx, userID, hash); err != nil {
+		return fmt.Errorf("services: update password: %w", err)
+	}
+
+	// Revoke existing sessions to prevent reuse of old tokens
+	if err := s.sessionRepo.RevokeAllForUser(ctx, userID); err != nil {
+		s.log.Warn("failed to revoke old sessions on password change", "user_id", userID, "error", err)
+	}
+
+	return nil
+}
+
+func formatRoleDisplay(role string) string {
+	switch role {
+	case models.RoleAdmin:
+		return "Admin"
+	case models.RoleSalesManager:
+		return "Sales Manager"
+	case models.RoleSalesExecutive:
+		return "Sales Executive"
+	case models.RoleLeader:
+		return "Leader"
+	default:
+		return role
+	}
 } 
 
 
@@ -817,4 +918,182 @@ func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string, curren
 		return fmt.Errorf("services: revoke session: %w", err)
 	}
 	return nil
-} 
+}
+
+// ListUsers returns all users in the system with their manager info and permissions.
+func (s *AuthService) ListUsers(ctx context.Context) ([]*models.UserSummary, error) {
+	users, err := s.userRepo.FindAllUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("services: list users: %w", err)
+	}
+
+	summaries := make([]*models.UserSummary, 0, len(users))
+	for _, u := range users {
+		summary := &models.UserSummary{
+			ID:             u.ID,
+			Name:           u.Name,
+			Email:          u.Email,
+			Mobile:         u.Mobile,
+			Role:           u.Role,
+			EmailVerified:  u.EmailVerified,
+			MobileVerified: u.MobileVerified,
+			ManagerID:      u.ManagerID,
+			Permissions:    make([]string, 0),
+		}
+
+		if u.ManagerID != nil {
+			if mgr, err := s.userRepo.FindByID(ctx, *u.ManagerID); err == nil && mgr != nil {
+				summary.ManagerName = &mgr.Name
+			}
+		}
+
+		if u.Role == models.RoleLeader {
+			if perms, err := s.userRepo.GetLeaderPermissions(ctx, u.ID); err == nil {
+				summary.Permissions = perms
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	return summaries, nil
+}
+
+// UpdateUser updates user details such as name, email, role, is_active, manager_id.
+func (s *AuthService) UpdateUser(ctx context.Context, id uuid.UUID, name, email, role string, isActive bool, managerID *uuid.UUID) (*models.UserSummary, error) {
+	if !models.IsValidRole(role) {
+		return nil, helpers.ErrBadRequest("invalid role specified")
+	}
+
+	// If managerID provided, verify manager exists and is a sales_manager
+	if managerID != nil {
+		mgr, err := s.userRepo.FindByID(ctx, *managerID)
+		if err != nil || mgr == nil {
+			return nil, helpers.ErrBadRequest("assigned manager does not exist")
+		}
+		if mgr.Role != models.RoleSalesManager {
+			return nil, helpers.ErrBadRequest("assigned manager must have role sales_manager")
+		}
+	}
+
+	err := s.userRepo.UpdateUserDetails(ctx, id, name, email, role, isActive, managerID)
+	if err != nil {
+		return nil, fmt.Errorf("services: update user: %w", err)
+	}
+
+	updated, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("services: find updated user: %w", err)
+	}
+
+	summary := &models.UserSummary{
+		ID:             updated.ID,
+		Name:           updated.Name,
+		Email:          updated.Email,
+		Mobile:         updated.Mobile,
+		Role:           updated.Role,
+		EmailVerified:  updated.EmailVerified,
+		MobileVerified: updated.MobileVerified,
+		ManagerID:      updated.ManagerID,
+		Permissions:    make([]string, 0),
+	}
+
+	if updated.ManagerID != nil {
+		if mgr, err := s.userRepo.FindByID(ctx, *updated.ManagerID); err == nil && mgr != nil {
+			summary.ManagerName = &mgr.Name
+		}
+	}
+
+	if updated.Role == models.RoleLeader {
+		if perms, err := s.userRepo.GetLeaderPermissions(ctx, updated.ID); err == nil {
+			summary.Permissions = perms
+		}
+	}
+
+	return summary, nil
+}
+
+// DeleteUser deletes or deactivates a user.
+func (s *AuthService) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	return s.userRepo.DeleteUser(ctx, id)
+}
+
+// AssignManager links an executive to a manager.
+func (s *AuthService) AssignManager(ctx context.Context, executiveID uuid.UUID, managerID *uuid.UUID) error {
+	exec, err := s.userRepo.FindByID(ctx, executiveID)
+	if err != nil || exec == nil {
+		return helpers.ErrNotFound
+	}
+	if exec.Role != models.RoleSalesExecutive {
+		return helpers.ErrBadRequest("can only assign managers to sales_executives")
+	}
+
+	if managerID != nil {
+		mgr, err := s.userRepo.FindByID(ctx, *managerID)
+		if err != nil || mgr == nil {
+			return helpers.ErrBadRequest("manager does not exist")
+		}
+		if mgr.Role != models.RoleSalesManager {
+			return helpers.ErrBadRequest("assigned manager must have sales_manager role")
+		}
+	}
+
+	return s.userRepo.AssignExecutiveToManager(ctx, executiveID, managerID)
+}
+
+// GetLeaderPermissions returns the active permissions granted to a leader.
+func (s *AuthService) GetLeaderPermissions(ctx context.Context, leaderID uuid.UUID) ([]string, error) {
+	leader, err := s.userRepo.FindByID(ctx, leaderID)
+	if err != nil || leader == nil {
+		return nil, helpers.ErrNotFound
+	}
+	if leader.Role != models.RoleLeader {
+		return nil, helpers.ErrBadRequest("user is not a leader")
+	}
+
+	return s.userRepo.GetLeaderPermissions(ctx, leaderID)
+}
+
+// GrantLeaderPermission grants an administrative permission to a leader.
+func (s *AuthService) GrantLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string, grantedBy uuid.UUID) error {
+	if !models.IsValidPermission(permission) {
+		return helpers.ErrBadRequest("invalid permission: " + permission)
+	}
+
+	leader, err := s.userRepo.FindByID(ctx, leaderID)
+	if err != nil || leader == nil {
+		return helpers.ErrNotFound
+	}
+	if leader.Role != models.RoleLeader {
+		return helpers.ErrBadRequest("can only grant permissions to leaders")
+	}
+
+	return s.userRepo.GrantLeaderPermission(ctx, leaderID, permission, &grantedBy)
+}
+
+// RevokeLeaderPermission removes an administrative permission from a leader.
+func (s *AuthService) RevokeLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string) error {
+	if !models.IsValidPermission(permission) {
+		return helpers.ErrBadRequest("invalid permission: " + permission)
+	}
+
+	return s.userRepo.RevokeLeaderPermission(ctx, leaderID, permission)
+}
+
+// GetMyPermissions returns current user's permissions.
+func (s *AuthService) GetMyPermissions(ctx context.Context, userID uuid.UUID, role string) ([]string, error) {
+	if role == models.RoleAdmin {
+		return []string{
+			models.PermissionUserView,
+			models.PermissionUserCreate,
+			models.PermissionUserUpdate,
+			models.PermissionUserDelete,
+			models.PermissionManagerManage,
+			models.PermissionSystemSettingsManage,
+		}, nil
+	}
+	if role == models.RoleLeader {
+		return s.userRepo.GetLeaderPermissions(ctx, userID)
+	}
+	return []string{}, nil
+}

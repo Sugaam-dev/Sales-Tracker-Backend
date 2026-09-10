@@ -11,6 +11,7 @@ import (
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -121,7 +122,7 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	_ = userRepo.Create(ctx, user2)
 	_ = userRepo.Create(ctx, user3)
 
-	activeUsers, err := leadService.GetCurrentUsers(ctx)
+	activeUsers, err := leadService.GetCurrentUsers(ctx, uuid.Nil, models.RoleAdmin)
 	if err != nil {
 		t.Fatalf("GetCurrentUsers failed: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	}
 
 	// Test default pagination and listing
-	leadsRes, pagRes, err := leadService.ListLeads(ctx, 1, 5, "", "", "", "", "createdAt", "desc")
+	leadsRes, pagRes, err := leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "", "", "", "", "createdAt", "desc")
 	if err != nil {
 		t.Fatalf("ListLeads failed: %v", err)
 	}
@@ -238,30 +239,30 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	}
 
 	// Test partial search matching
-	leadsRes, _, _ = leadService.ListLeads(ctx, 1, 5, "Acme", "", "", "", "", "")
+	leadsRes, _, _ = leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "Acme", "", "", "", "", "")
 	if len(leadsRes) != 1 || leadsRes[0].Company != "Acme Corporation" {
 		t.Error("Search by company failed")
 	}
 
-	leadsRes, _, _ = leadService.ListLeads(ctx, 1, 5, "1002", "", "", "", "", "")
+	leadsRes, _, _ = leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "1002", "", "", "", "", "")
 	if len(leadsRes) != 1 || leadsRes[0].ID != "L-1002" {
 		t.Error("Search by lead_id (partial) failed")
 	}
 
 	// Test stage validation (bad stage returns 400 AppError)
-	_, _, err = leadService.ListLeads(ctx, 1, 5, "", "", "", "InvalidStage", "", "")
+	_, _, err = leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "", "", "", "InvalidStage", "", "")
 	if err == nil {
 		t.Error("Expected error on invalid stage filter, got nil")
 	}
 
 	// Test sorting (value asc)
-	leadsRes, _, _ = leadService.ListLeads(ctx, 1, 5, "", "", "", "", "value", "asc")
+	leadsRes, _, _ = leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "", "", "", "", "value", "asc")
 	if len(leadsRes) == 2 && *leadsRes[0].Value != "100000" {
 		t.Errorf("Sorting by value failed, first element value should be 100000, got %s", *leadsRes[0].Value)
 	}
 
 	// 8. Test API 4: GetLead (Single Lead profile)
-	singleLead, err := leadService.GetLead(ctx, "L-1001")
+	singleLead, err := leadService.GetLead(ctx, uuid.Nil, models.RoleAdmin, "L-1001")
 	if err != nil {
 		t.Fatalf("GetLead failed: %v", err)
 	}
@@ -270,14 +271,14 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 	}
 
 	// Test malformed/invalid/non-existent lead id
-	_, err = leadService.GetLead(ctx, "L-9999")
+	_, err = leadService.GetLead(ctx, uuid.Nil, models.RoleAdmin, "L-9999")
 	if err != helpers.ErrNotFound {
 		t.Errorf("Expected ErrNotFound for non-existent lead, got %v", err)
 	}
 
 	// Test soft-delete (mark lead1 as deleted)
 	_, _ = pool.Exec(ctx, "UPDATE leads SET deleted_at = NOW() WHERE lead_id = 'L-1001'")
-	_, err = leadService.GetLead(ctx, "L-1001")
+	_, err = leadService.GetLead(ctx, uuid.Nil, models.RoleAdmin, "L-1001")
 	if err != helpers.ErrNotFound {
 		t.Errorf("Expected ErrNotFound for soft-deleted lead, got %v", err)
 	}
@@ -319,7 +320,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 1. Test status mapping update (Open -> Prospecting)
-	res, err := leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	res, err := leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Open"),
 	})
 	if err != nil || res.Stage == nil || *res.Stage != "Prospecting" {
@@ -327,7 +328,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 2. Test status mapping update (New -> Qualification)
-	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("New"),
 	})
 	if err != nil || res.Stage == nil || *res.Stage != "Qualification" {
@@ -335,7 +336,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 3. Test backward progression (New -> Open)
-	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Open"),
 	})
 	if err != nil || res.Status == nil || *res.Status != "Open" || res.Stage == nil || *res.Stage != "Prospecting" {
@@ -343,7 +344,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 4. Test invalid status-stage combination
-	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Won"),
 		Stage:  strPtr("Prospecting"),
 	})
@@ -352,7 +353,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 5. Test Lost Reason validation (missing reason)
-	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Lost"),
 	})
 	if err == nil {
@@ -360,7 +361,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 6. Test Lost Reason validation (empty spaces)
-	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status:     strPtr("Lost"),
 		LostReason: strPtr("   "),
 	})
@@ -370,7 +371,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 
 	// 7. Test Lost Reason valid submit
 	reason := "Pricing too high compared to competitors"
-	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status:     strPtr("Lost"),
 		LostReason: &reason,
 	})
@@ -379,7 +380,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 8. Test Lost Reason retention when moving away from Lost status
-	res, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	res, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Interested"),
 	})
 	if err != nil || res.Status == nil || *res.Status != "Interested" || res.Stage == nil || *res.Stage != "Proposal" || res.LostReason == nil || *res.LostReason != reason {
@@ -387,7 +388,7 @@ func TestLeadLifecycleUpdate(t *testing.T) {
 	}
 
 	// 9. Test Atomicity: Ensure invalid updates do not modify the lead partially in database
-	_, err = leadService.UpdateLead("L-9999", models.RoleAdmin, "admin@example.com", models.UpdateLeadRequest{
+	_, err = leadService.UpdateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", "L-9999", models.UpdateLeadRequest{
 		Status: strPtr("Won"),
 		Stage:  strPtr("Prospecting"), // Inconsistent stage
 	})

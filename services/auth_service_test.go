@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 )
 
@@ -64,6 +65,36 @@ func (m *mockUserRepo) UpdatePassword(ctx context.Context, id uuid.UUID, newPass
 }
 func (m *mockUserRepo) FindActiveUsers(ctx context.Context) ([]*models.User, error) {
 	return nil, nil
+}
+func (m *mockUserRepo) FindAllUsers(ctx context.Context) ([]*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) GetManagedExecutiveIDs(ctx context.Context, managerID uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) GetManagedExecutives(ctx context.Context, managerID uuid.UUID) ([]*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) GetLeaderPermissions(ctx context.Context, leaderID uuid.UUID) ([]string, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) GrantLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string, grantedBy *uuid.UUID) error {
+	return nil
+}
+func (m *mockUserRepo) RevokeLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string) error {
+	return nil
+}
+func (m *mockUserRepo) AssignExecutiveToManager(ctx context.Context, executiveID uuid.UUID, managerID *uuid.UUID) error {
+	return nil
+}
+func (m *mockUserRepo) FindUsersScoped(ctx context.Context, scope helpers.DataScope) ([]*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) UpdateUserDetails(ctx context.Context, id uuid.UUID, name, email, role string, isActive bool, managerID *uuid.UUID) error {
+	return nil
+}
+func (m *mockUserRepo) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	return nil
 }
 
 // mockRoundTripper intercepts HTTP requests for tests

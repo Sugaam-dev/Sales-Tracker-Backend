@@ -54,6 +54,8 @@ type Lead struct {
 	NextFollowUp       *time.Time `json:"nextFollowUp" gorm:"column:next_follow_up;type:timestamp with time zone"`
 	BasicRequirements  *string    `json:"basicRequirements" gorm:"column:basic_requirements;type:text"`
 	Notes              *string    `json:"notes" gorm:"column:notes;type:text"`
+	CreatedBy          *uuid.UUID `json:"createdBy,omitempty" gorm:"type:uuid;index"`
+	AssignedTo         *uuid.UUID `json:"assignedTo,omitempty" gorm:"type:uuid;index"`
 	Activities         []Activity `json:"activities,omitempty" gorm:"foreignKey:LeadID;references:LeadID"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"not null;autoCreateTime"`
 	UpdatedAt          time.Time  `json:"updatedAt" gorm:"not null;autoUpdateTime"`
@@ -80,6 +82,7 @@ type ActiveUserResponse struct {
 	ID       uuid.UUID `json:"id"`
 	Name     string    `json:"name"`
 	Email    string    `json:"email"`
+	Role     string    `json:"role"`
 	IsActive bool      `json:"isActive"`
 }
 
@@ -94,6 +97,8 @@ type LeadResponse struct {
 	OfficePhone        *string    `json:"officePhone,omitempty"`
 	OfficePhoneCountry *string    `json:"officePhoneCountry,omitempty"`
 	Owner              *string    `json:"owner,omitempty"`
+	CreatedBy          *string    `json:"createdBy,omitempty"`
+	AssignedTo         *string    `json:"assignedTo,omitempty"`
 	Industry           *string    `json:"industry,omitempty"`
 	Size               *string    `json:"size,omitempty"`
 	Region             *string    `json:"region,omitempty"`
@@ -142,6 +147,8 @@ type UpdateLeadRequest struct {
 	RequestType        *string `json:"requestType,omitempty"`
 	CountryCode        *string `json:"countryCode,omitempty"`
 	Owner                    *string `json:"owner,omitempty"`
+	CreatedBy                *string `json:"createdBy,omitempty"`
+	AssignedTo               *string `json:"assignedTo,omitempty"`
 	Stage                    *string `json:"stage,omitempty"`
 	Status                   *string `json:"status,omitempty"`
 	Priority                 *string `json:"priority,omitempty"`

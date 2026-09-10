@@ -18,6 +18,7 @@ type Config struct {
 	DB     DBConfig
 	JWT    JWTConfig
 	Rate   RateLimitConfig
+	SMTP   SMTPConfig
 }
 
 // ServerConfig defines server environment and execution port.
@@ -63,6 +64,14 @@ type RateLimitConfig struct {
 	Window      time.Duration
 }
 
+// SMTPConfig holds SMTP server credentials for email delivery.
+type SMTPConfig struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+}
+
 // LoadConfig reads configuration settings from the environment or a .env file.
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
@@ -90,6 +99,12 @@ func LoadConfig() (*Config, error) {
 		Rate: RateLimitConfig{
 			MaxAttempts: 5,
 			Window:      15 * time.Minute,
+		},
+		SMTP: SMTPConfig{
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     getEnv("SMTP_PORT", "587"),
+			Username: getEnv("SMTP_USERNAME", ""),
+			Password: getEnv("SMTP_PASSWORD", ""),
 		},
 	}
 
@@ -230,9 +245,12 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state)`,
 		
-		// Alter users to support Lead Module fields
+		// Alter users to support Lead Module fields and temporary password
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_change_required BOOLEAN NOT NULL DEFAULT TRUE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_users_manager_id ON users(manager_id)`,
 
 		// Lead Module Master Stages
 		`CREATE TABLE IF NOT EXISTS lead_stages (

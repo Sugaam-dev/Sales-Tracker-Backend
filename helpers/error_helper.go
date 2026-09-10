@@ -55,10 +55,14 @@ func ErrBadRequest(message string) *AppError {
 }
 
 // ErrInternal constructs a 500 AppError for internal runtime exceptions.
-func ErrInternal() *AppError {
+func ErrInternal(messages ...string) *AppError {
+	msg := "Something went wrong. Please try again."
+	if len(messages) > 0 && messages[0] != "" {
+		msg = messages[0]
+	}
 	return &AppError{
 		Status:  http.StatusInternalServerError,
-		Message: "Something went wrong. Please try again.",
+		Message: msg,
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"crm-auth-service/helpers"
+	"crm-auth-service/middleware"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 )
@@ -26,23 +27,23 @@ var (
 )
 
 type LeadService interface {
-	CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error)
-	UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error)
-	DeleteLead(leadID string, userRole string) error
-	GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error)
+	CreateLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, req models.CreateLeadRequest) (*models.LeadResponse, error)
+	UpdateLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string, req models.UpdateLeadRequest) (*models.LeadResponse, error)
+	DeleteLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string) error
+	GetLeadActivities(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string) ([]models.ActivityResponse, error)
 
-	GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error)
+	GetCurrentUsers(ctx context.Context, callerID uuid.UUID, callerRole string) ([]models.ActiveUserResponse, error)
 	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
-	ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
-	GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error)
+	ListLeads(ctx context.Context, callerID uuid.UUID, callerRole string, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
+	GetLead(ctx context.Context, callerID uuid.UUID, callerRole string, leadID string) (*models.LeadResponse, error)
 
-	CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
-	CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error)
-	BulkCreateLeads(userRole, userEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error)
+	CreateActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
+	CompleteActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, activityID uint, completed bool) (*models.ActivityResponse, error)
+	BulkCreateLeads(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error)
 
-	GetActivities(ctx context.Context, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error)
+	GetActivities(ctx context.Context, callerID uuid.UUID, callerRole string, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error)
 	LogActivity(ctx context.Context, userID uuid.UUID, userRole, userEmail string, req models.LogActivityRequest) (*models.ActivityFeedItemResponse, error)
-	GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error)
+	GetActivitiesSummary(ctx context.Context, callerID uuid.UUID, callerRole string) (*models.ActivitySummaryData, error)
 }
 
 type leadService struct {
@@ -74,7 +75,7 @@ func (s *leadService) handleDBError(err error) error {
 	return err
 }
 
-func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResponse, error) {
+func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, req models.CreateLeadRequest) (*models.LeadResponse, error) {
 	// Support conceptual aliases from frontend Quick Create Lead form
 	if req.Company == "" && req.CompanyName != "" {
 		req.Company = req.CompanyName
@@ -99,6 +100,11 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 	}
 	if req.EstimatedRequirementDate == "" && req.EstimatedReqDate != "" {
 		req.EstimatedRequirementDate = req.EstimatedReqDate
+	}
+
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
 
 	// 1. Basic Required Fields
@@ -146,16 +152,60 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		return nil, helpers.ErrBadRequest(err.Error())
 	}
 
-	if req.Owner != "" {
-		exists, err := s.leadRepo.CheckUserExists(req.Owner)
-		if err != nil || !exists {
-			return nil, helpers.ErrBadRequest("Owner does not exist.")
-		}
-	}
 	if req.Stage != "" {
 		exists, err := s.leadRepo.CheckStageExists(req.Stage)
 		if err != nil || !exists {
 			return nil, helpers.ErrBadRequest("Stage does not exist.")
+		}
+	}
+
+	createdByUUID := callerID
+	var assignedToUUID *uuid.UUID
+
+	callerUser, _ := s.userRepo.FindByID(ctx, callerID)
+
+	if callerRole == models.RoleSalesExecutive {
+		// Sales Executive can only create leads assigned to themselves
+		assignedToUUID = &callerID
+		if callerUser != nil {
+			req.Owner = callerUser.Name
+		}
+	} else if req.AssignedTo != "" {
+		parsedAssigned, err := uuid.Parse(req.AssignedTo)
+		if err != nil {
+			return nil, helpers.ErrBadRequest("invalid assigned_to user id")
+		}
+		if !scope.CanAssignLead(parsedAssigned) {
+			return nil, helpers.ErrForbidden("cannot assign lead to user outside authorized team")
+		}
+		targetUser, err := s.userRepo.FindByID(ctx, parsedAssigned)
+		if err != nil || targetUser == nil {
+			return nil, helpers.ErrBadRequest("assigned user does not exist")
+		}
+		assignedToUUID = &parsedAssigned
+		req.Owner = targetUser.Name
+	} else if req.Owner != "" {
+		exists, err := s.leadRepo.CheckUserExists(req.Owner)
+		if err != nil || !exists {
+			return nil, helpers.ErrBadRequest("Owner does not exist.")
+		}
+		// Resolve assigned_to UUID from owner name
+		users, _ := s.userRepo.FindAllUsers(ctx)
+		for _, u := range users {
+			if strings.EqualFold(u.Name, req.Owner) {
+				if !scope.CanAssignLead(u.ID) {
+					return nil, helpers.ErrForbidden("cannot assign lead to owner outside authorized team")
+				}
+				targetID := u.ID
+				assignedToUUID = &targetID
+				break
+			}
+		}
+	} else {
+		// Default assigned to caller
+		assignedToUUID = &callerID
+		if callerUser != nil {
+			req.Owner = callerUser.Name
 		}
 	}
 
@@ -168,6 +218,8 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		OfficePhone:        &req.OfficePhone,
 		OfficePhoneCountry: &req.OfficePhoneCountry,
 		Owner:              &req.Owner,
+		CreatedBy:          &createdByUUID,
+		AssignedTo:         assignedToUUID,
 		Stage:              &req.Stage,
 		Status:             &req.Status,
 		Sentiment:          &req.Sentiment,
@@ -288,7 +340,7 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 		lead.Notes = &req.Notes
 	}
 
-	err := s.leadRepo.CreateLead(lead)
+	err = s.leadRepo.CreateLead(lead)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
@@ -297,24 +349,45 @@ func (s *leadService) CreateLead(req models.CreateLeadRequest) (*models.LeadResp
 	return &resp, nil
 }
 
-func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
+func (s *leadService) UpdateLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string, req models.UpdateLeadRequest) (*models.LeadResponse, error) {
 	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
-	if err != nil && userRole != models.RoleAdmin {
-		// log or ignore for now, allow edit
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
 
-	leadOwner := ""
-	if lead.Owner != nil {
-		leadOwner = *lead.Owner
+	if !scope.CanAccessLead(lead) {
+		return nil, ErrUnauthorized
 	}
 
-	if userRole != models.RoleAdmin && leadOwner != userName {
-		// bypass strict owner check to allow team collaboration edits
+	// If owner reassignment is requested, validate permissions
+	if req.Owner != nil && (lead.Owner == nil || !strings.EqualFold(*lead.Owner, *req.Owner)) {
+		if callerRole == models.RoleSalesExecutive {
+			return nil, helpers.ErrForbidden("sales executives cannot reassign lead ownership")
+		}
+
+		users, err := s.userRepo.FindAllUsers(ctx)
+		if err != nil {
+			return nil, helpers.ErrInternal("failed to lookup users")
+		}
+		var targetUser *models.User
+		for _, u := range users {
+			if strings.EqualFold(u.Name, *req.Owner) {
+				targetUser = u
+				break
+			}
+		}
+		if targetUser == nil {
+			return nil, helpers.ErrBadRequest("new owner does not exist")
+		}
+
+		if !scope.CanAssignLead(targetUser.ID) {
+			return nil, helpers.ErrForbidden("cannot assign lead to user outside authorized team")
+		}
 	}
 
 	newStatus := lead.Status
@@ -393,6 +466,30 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	updates := make(map[string]interface{})
 	if req.Owner != nil {
 		updates["owner"] = *req.Owner
+		// Also update assigned_to if we can find the matching user
+		users, _ := s.userRepo.FindAllUsers(ctx)
+		for _, u := range users {
+			if strings.EqualFold(u.Name, *req.Owner) {
+				updates["assigned_to"] = u.ID
+				break
+			}
+		}
+	}
+	if req.AssignedTo != nil && *req.AssignedTo != "" {
+		if callerRole == models.RoleSalesExecutive {
+			return nil, helpers.ErrForbidden("sales executives cannot reassign lead ownership")
+		}
+		parsedAssigned, err := uuid.Parse(*req.AssignedTo)
+		if err == nil {
+			if !scope.CanAssignLead(parsedAssigned) {
+				return nil, helpers.ErrForbidden("cannot assign lead to user outside authorized team")
+			}
+			targetUser, _ := s.userRepo.FindByID(ctx, parsedAssigned)
+			if targetUser != nil {
+				updates["assigned_to"] = parsedAssigned
+				updates["owner"] = targetUser.Name
+			}
+		}
 	}
 	if newStage != nil {
 		updates["stage"] = *newStage
@@ -571,32 +668,42 @@ func (s *leadService) UpdateLead(leadID string, userRole, userEmail string, req 
 	return &resp, nil
 }
 
-func (s *leadService) DeleteLead(leadID string, userRole string) error {
-	if userRole != models.RoleAdmin && userRole != models.RoleSalesManager {
+func (s *leadService) DeleteLead(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string) error {
+	if callerRole != models.RoleAdmin && callerRole != models.RoleSalesManager {
 		return ErrUnauthorized
 	}
-	err := s.leadRepo.DeleteLead(leadID)
+
+	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
+	if err != nil {
+		return s.handleDBError(err)
+	}
+
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return helpers.ErrInternal("failed to resolve user data scope")
+	}
+
+	if !scope.CanAccessLead(lead) {
+		return ErrUnauthorized
+	}
+
+	err = s.leadRepo.DeleteLead(leadID)
 	return s.handleDBError(err)
 }
 
-func (s *leadService) GetLeadActivities(leadID string, userRole, userEmail string) ([]models.ActivityResponse, error) {
+func (s *leadService) GetLeadActivities(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string) ([]models.ActivityResponse, error) {
 	lead, err := s.leadRepo.GetLeadActivities(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
-	if err != nil && userRole != models.RoleAdmin {
-		// bypass
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
 
-	leadOwner := ""
-	if lead.Owner != nil {
-		leadOwner = *lead.Owner
-	}
-
-	if userRole != models.RoleAdmin && leadOwner != userName {
-		// bypass
+	if !scope.CanAccessLead(lead) {
+		return nil, ErrUnauthorized
 	}
 
 	resp := make([]models.ActivityResponse, len(lead.Activities))
@@ -610,8 +717,13 @@ func (s *leadService) GetLeadActivities(leadID string, userRole, userEmail strin
 // Sahil's Methods
 // ---------------------------------------------
 
-func (s *leadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserResponse, error) {
-	users, err := s.userRepo.FindActiveUsers(ctx)
+func (s *leadService) GetCurrentUsers(ctx context.Context, callerID uuid.UUID, callerRole string) ([]models.ActiveUserResponse, error) {
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, fmt.Errorf("service: resolve scope: %w", err)
+	}
+
+	users, err := s.userRepo.FindUsersScoped(ctx, scope)
 	if err != nil {
 		return nil, fmt.Errorf("service: get current users: %w", err)
 	}
@@ -622,6 +734,7 @@ func (s *leadService) GetCurrentUsers(ctx context.Context) ([]models.ActiveUserR
 			ID:       u.ID,
 			Name:     u.Name,
 			Email:    u.Email,
+			Role:     u.Role,
 			IsActive: u.IsActive,
 		})
 	}
@@ -636,7 +749,7 @@ func (s *leadService) GetMasterStages(ctx context.Context) ([]*models.LeadStage,
 	return stages, nil
 }
 
-func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error) {
+func (s *leadService) ListLeads(ctx context.Context, callerID uuid.UUID, callerRole string, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error) {
 	if page < 1 {
 		return nil, nil, &helpers.AppError{Status: http.StatusBadRequest, Message: "page must be greater than or equal to 1"}
 	}
@@ -651,7 +764,12 @@ func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, ow
 		}
 	}
 
-	leads, total, err := s.leadRepo.FindLeads(ctx, page, limit, search, owner, priority, stage, sortBy, sortOrder)
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, nil, fmt.Errorf("service: resolve scope: %w", err)
+	}
+
+	leads, total, err := s.leadRepo.FindLeads(ctx, scope, page, limit, search, owner, priority, stage, sortBy, sortOrder)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -672,11 +790,21 @@ func (s *leadService) ListLeads(ctx context.Context, page, limit int, search, ow
 	return leadResponses, pagination, nil
 }
 
-func (s *leadService) GetLead(ctx context.Context, leadID string) (*models.LeadResponse, error) {
+func (s *leadService) GetLead(ctx context.Context, callerID uuid.UUID, callerRole string, leadID string) (*models.LeadResponse, error) {
 	lead, err := s.leadRepo.FindByID(ctx, leadID)
 	if err != nil {
 		return nil, err
 	}
+
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, fmt.Errorf("service: resolve scope: %w", err)
+	}
+
+	if !scope.CanAccessLead(lead) {
+		return nil, ErrUnauthorized
+	}
+
 	res := s.mapToResponse(lead)
 	return &res, nil
 }
@@ -714,6 +842,8 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		OfficePhone:              l.OfficePhone,
 		OfficePhoneCountry:       l.OfficePhoneCountry,
 		Owner:                    l.Owner,
+		CreatedBy:                helpers.UUIDPtrToStringPtr(l.CreatedBy),
+		AssignedTo:               helpers.UUIDPtrToStringPtr(l.AssignedTo),
 		Industry:                 l.Industry,
 		Size:                     l.Size,
 		Region:                   l.Region,
@@ -747,23 +877,18 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 	return resp
 }
 
-func (s *leadService) CreateActivity(leadID string, userRole, userEmail string, req models.CreateActivityRequest) (*models.ActivityResponse, error) {
+func (s *leadService) CreateActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string, req models.CreateActivityRequest) (*models.ActivityResponse, error) {
 	lead, err := s.leadRepo.GetLeadByLeadID(leadID)
 	if err != nil {
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
-	if err != nil && userRole != models.RoleAdmin {
-		return nil, ErrUnauthorized
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
 
-	leadOwner := ""
-	if lead.Owner != nil {
-		leadOwner = *lead.Owner
-	}
-
-	if userRole != models.RoleAdmin && leadOwner != userName {
+	if !scope.CanAccessLead(lead) {
 		return nil, ErrUnauthorized
 	}
 
@@ -778,6 +903,7 @@ func (s *leadService) CreateActivity(leadID string, userRole, userEmail string, 
 
 	activity := &models.Activity{
 		LeadID:    lead.LeadID,
+		Rep:       &callerID,
 		Type:      req.Type,
 		Desc:      req.Desc,
 		Outcome:   req.Outcome,
@@ -794,7 +920,7 @@ func (s *leadService) CreateActivity(leadID string, userRole, userEmail string, 
 	return &resp, nil
 }
 
-func (s *leadService) CompleteActivity(activityID uint, userRole, userEmail string, completed bool) (*models.ActivityResponse, error) {
+func (s *leadService) CompleteActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, activityID uint, completed bool) (*models.ActivityResponse, error) {
 	activity, err := s.leadRepo.GetActivityByID(activityID)
 	if err != nil {
 		return nil, s.handleDBError(err)
@@ -805,17 +931,12 @@ func (s *leadService) CompleteActivity(activityID uint, userRole, userEmail stri
 		return nil, s.handleDBError(err)
 	}
 
-	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
-	if err != nil && userRole != models.RoleAdmin {
-		return nil, ErrUnauthorized
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
 
-	leadOwner := ""
-	if lead.Owner != nil {
-		leadOwner = *lead.Owner
-	}
-
-	if userRole != models.RoleAdmin && leadOwner != userName {
+	if !scope.CanAccessLead(lead) {
 		return nil, ErrUnauthorized
 	}
 
@@ -834,11 +955,13 @@ func (s *leadService) CompleteActivity(activityID uint, userRole, userEmail stri
 	return &resp, nil
 }
 
-func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error) {
-	_, err := s.leadRepo.GetUserNameByEmail(userEmail)
-	if err != nil && userRole != models.RoleAdmin {
-		return nil, ErrUnauthorized
+func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, req models.BulkCreateLeadsRequest) (*models.BulkCreateResponse, error) {
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
 	}
+
+	callerUser, _ := s.userRepo.FindByID(ctx, callerID)
 
 	total := len(req.Leads)
 	created := make([]models.BulkCreateCreatedResponse, 0)
@@ -846,6 +969,13 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 
 	batchEmails := make(map[string]bool)
 	batchCompanies := make(map[string]bool)
+
+	// Pre-fetch all users for owner resolution
+	allUsers, _ := s.userRepo.FindAllUsers(ctx)
+	userMapByName := make(map[string]*models.User)
+	for _, u := range allUsers {
+		userMapByName[strings.ToLower(u.Name)] = u
+	}
 
 	for i, item := range req.Leads {
 		errorsMap := make(map[string]string)
@@ -886,16 +1016,30 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 			}
 		}
 
-		if strings.TrimSpace(item.Owner) == "" {
-			errorsMap["owner"] = "Owner is required"
+		// Owner & AssignedTo resolution based on caller role
+		var leadAssignedTo *uuid.UUID
+		effectiveOwner := item.Owner
+
+		if callerRole == models.RoleSalesExecutive {
+			leadAssignedTo = &callerID
+			if callerUser != nil {
+				effectiveOwner = callerUser.Name
+			}
 		} else {
-			exists, err := s.leadRepo.CheckUserExists(item.Owner)
-			if err != nil || !exists {
-				errorsMap["owner"] = "Owner does not exist"
+			if strings.TrimSpace(item.Owner) == "" {
+				errorsMap["owner"] = "Owner is required"
 			} else {
-				active, err := s.leadRepo.CheckUserActive(item.Owner)
-				if err != nil || !active {
+				targetUser, exists := userMapByName[strings.ToLower(strings.TrimSpace(item.Owner))]
+				if !exists {
+					errorsMap["owner"] = "Owner does not exist"
+				} else if !targetUser.IsActive {
 					errorsMap["owner"] = "Owner must be active"
+				} else if !scope.CanAssignLead(targetUser.ID) {
+					errorsMap["owner"] = "Cannot assign lead to user outside authorized team"
+				} else {
+					targetID := targetUser.ID
+					leadAssignedTo = &targetID
+					effectiveOwner = targetUser.Name
 				}
 			}
 		}
@@ -1029,6 +1173,7 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 		batchEmails[emailTrimmed] = true
 		batchCompanies[strings.ToLower(companyTrimmed)] = true
 
+		createdByUUID := callerID
 		lead := &models.Lead{
 			Company:            companyTrimmed,
 			Contact:            &item.Contact,
@@ -1036,7 +1181,9 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 			Phone:              &item.Phone,
 			OfficePhone:        &item.OfficePhone,
 			OfficePhoneCountry: &item.OfficePhoneCountry,
-			Owner:              &item.Owner,
+			Owner:              &effectiveOwner,
+			CreatedBy:          &createdByUUID,
+			AssignedTo:         leadAssignedTo,
 			Stage:              &normalizedStage,
 			Status:             &item.Status,
 			Sentiment:          &item.Sentiment,
@@ -1128,7 +1275,7 @@ func (s *leadService) BulkCreateLeads(userRole, userEmail string, req models.Bul
 	}, nil
 }
 
-func (s *leadService) GetActivities(ctx context.Context, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error) {
+func (s *leadService) GetActivities(ctx context.Context, callerID uuid.UUID, callerRole string, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error) {
 	if query.Page < 1 {
 		query.Page = 1
 	}
@@ -1138,7 +1285,12 @@ func (s *leadService) GetActivities(ctx context.Context, query models.GetActivit
 		query.Limit = 100
 	}
 
-	items, total, typeCounts, err := s.leadRepo.FindActivitiesFeed(ctx, query)
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, fmt.Errorf("service: resolve scope: %w", err)
+	}
+
+	items, total, typeCounts, err := s.leadRepo.FindActivitiesFeed(ctx, scope, query)
 	if err != nil {
 		return nil, fmt.Errorf("service: get activities feed: %w", err)
 	}
@@ -1223,6 +1375,15 @@ func (s *leadService) LogActivity(ctx context.Context, userID uuid.UUID, userRol
 		return nil, helpers.ErrBadRequest("leadId or lead is required")
 	}
 
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, userID, userRole)
+	if err != nil {
+		return nil, helpers.ErrInternal("failed to resolve user data scope")
+	}
+
+	if !scope.CanAccessLead(lead) {
+		return nil, ErrUnauthorized
+	}
+
 	activity := &models.Activity{
 		LeadID:    lead.LeadID,
 		Rep:       &userID,
@@ -1276,8 +1437,13 @@ func (s *leadService) LogActivity(ctx context.Context, userID uuid.UUID, userRol
 	return resp, nil
 }
 
-func (s *leadService) GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error) {
-	summary, err := s.leadRepo.GetActivitiesSummary(ctx)
+func (s *leadService) GetActivitiesSummary(ctx context.Context, callerID uuid.UUID, callerRole string) (*models.ActivitySummaryData, error) {
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
+	if err != nil {
+		return nil, fmt.Errorf("service: resolve scope: %w", err)
+	}
+
+	summary, err := s.leadRepo.GetActivitiesSummary(ctx, scope)
 	if err != nil {
 		return nil, fmt.Errorf("service: get activities summary: %w", err)
 	}
