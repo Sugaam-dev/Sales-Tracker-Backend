@@ -41,9 +41,13 @@ func (s *taskService) CreateTask(ctx context.Context, userID string, req models.
 	if req.DueDate != nil && *req.DueDate != "" {
 		t, err := time.Parse("2006-01-02", *req.DueDate)
 		if err != nil {
-			return nil, ErrValidation
+			t2, err2 := time.Parse(time.RFC3339, *req.DueDate)
+			if err2 == nil {
+				parsedDate = &t2
+			}
+		} else {
+			parsedDate = &t
 		}
-		parsedDate = &t
 	}
 
 	task := &models.Task{
