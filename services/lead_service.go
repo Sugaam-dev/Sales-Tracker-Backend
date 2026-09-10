@@ -141,11 +141,8 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 		return nil, helpers.ErrBadRequest("Request details is required.")
 	}
 	wordCount := helpers.CountWords(req.RequestDetails)
-	if wordCount < 50 {
-		return nil, helpers.ErrBadRequest("Request details must contain at least 50 words.")
-	}
-	if wordCount > 200 {
-		return nil, helpers.ErrBadRequest("Request details cannot exceed 200 words.")
+	if wordCount < 10 || wordCount > 200 {
+		return nil, helpers.ErrBadRequest("Request details must be between 10 and 200 words.")
 	}
 
 	// 5. Phone & Country Code Validation
@@ -569,11 +566,8 @@ func (s *leadService) UpdateLead(ctx context.Context, callerID uuid.UUID, caller
 			return nil, helpers.ErrBadRequest("Request details is required.")
 		}
 		wordCount := helpers.CountWords(reqDetails)
-		if wordCount < 50 {
-			return nil, helpers.ErrBadRequest("Request details must contain at least 50 words.")
-		}
-		if wordCount > 200 {
-			return nil, helpers.ErrBadRequest("Request details cannot exceed 200 words.")
+		if wordCount < 10 || wordCount > 200 {
+			return nil, helpers.ErrBadRequest("Request details must be between 10 and 200 words.")
 		}
 		updates["request_details"] = reqDetails
 	}

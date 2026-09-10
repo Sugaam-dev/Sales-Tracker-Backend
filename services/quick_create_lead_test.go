@@ -36,11 +36,17 @@ func TestQuickCreateLeadValidationUnits(t *testing.T) {
 		if count := helpers.CountWords("one\ntwo\tthree\r\nfour"); count != 4 {
 			t.Errorf("Expected 4 words for whitespace delimited string, got %d", count)
 		}
-		if count := helpers.CountWords(generateWords(50)); count != 50 {
-			t.Errorf("Expected 50 words, got %d", count)
+		if count := helpers.CountWords(generateWords(9)); count != 9 {
+			t.Errorf("Expected 9 words, got %d", count)
+		}
+		if count := helpers.CountWords(generateWords(10)); count != 10 {
+			t.Errorf("Expected 10 words, got %d", count)
 		}
 		if count := helpers.CountWords(generateWords(200)); count != 200 {
 			t.Errorf("Expected 200 words, got %d", count)
+		}
+		if count := helpers.CountWords(generateWords(201)); count != 201 {
+			t.Errorf("Expected 201 words, got %d", count)
 		}
 	})
 
@@ -208,25 +214,25 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 			t.Error("Expected error for whitespace-only requestDetails, got nil")
 		}
 
-		// 49 words => INVALID
-		req49 := baseReq
-		req49.CompanyName = "Word Count Corp 49"
-		req49.Email = "quick_test_49@company.net"
-		req49.RequestDetails = generateWords(49)
-		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req49)
-		if err == nil || !strings.Contains(err.Error(), "at least 50 words") {
-			t.Errorf("Expected 'at least 50 words' error for 49 words, got: %v", err)
+		// 9 words => INVALID
+		req9 := baseReq
+		req9.CompanyName = "Word Count Corp 9"
+		req9.Email = "quick_test_9@company.net"
+		req9.RequestDetails = generateWords(9)
+		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req9)
+		if err == nil || !strings.Contains(err.Error(), "between 10 and 200 words") {
+			t.Errorf("Expected 'between 10 and 200 words' error for 9 words, got: %v", err)
 		}
 
-		// 50 words => VALID
-		req50 := baseReq
-		req50.CompanyName = "Word Count Corp 50"
-		req50.Email = "quick_test_50@company.net"
-		req50.RequestDetails = generateWords(50)
-		resp50, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req50)
+		// 10 words => VALID
+		req10 := baseReq
+		req10.CompanyName = "Word Count Corp 10"
+		req10.Email = "quick_test_10@company.net"
+		req10.RequestDetails = generateWords(10)
+		resp10, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req10)
 		if err != nil {
-			t.Errorf("Expected 50 words to be valid, got err: %v", err)
-		} else if resp50.RequestDetails == nil || *resp50.RequestDetails != req50.RequestDetails {
+			t.Errorf("Expected 10 words to be valid, got err: %v", err)
+		} else if resp10.RequestDetails == nil || *resp10.RequestDetails != req10.RequestDetails {
 			t.Errorf("RequestDetails not preserved on response")
 		}
 
@@ -249,8 +255,8 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		req201.Email = "quick_test_201@company.net"
 		req201.RequestDetails = generateWords(201)
 		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req201)
-		if err == nil || !strings.Contains(err.Error(), "cannot exceed 200 words") {
-			t.Errorf("Expected 'cannot exceed 200 words' error for 201 words, got: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "between 10 and 200 words") {
+			t.Errorf("Expected 'between 10 and 200 words' error for 201 words, got: %v", err)
 		}
 	})
 
