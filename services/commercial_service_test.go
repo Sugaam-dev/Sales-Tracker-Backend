@@ -252,12 +252,12 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 	commService := NewCommercialService(commRepo, leadRepo, userRepo)
 
 	// Clean up existing test data
-	_, _ = pool.Exec(ctx, "DELETE FROM sdlc_allocations")
-	_, _ = pool.Exec(ctx, "DELETE FROM commercial_expenses")
-	_, _ = pool.Exec(ctx, "DELETE FROM commercial_resources")
-	_, _ = pool.Exec(ctx, "DELETE FROM commercial_estimations")
-	_, _ = pool.Exec(ctx, "DELETE FROM activities")
-	_, _ = pool.Exec(ctx, "DELETE FROM leads")
+	_, _ = pool.Exec(ctx, "DELETE FROM sdlc_allocations WHERE commercial_estimation_id IN (SELECT id FROM commercial_estimations WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001')")
+	_, _ = pool.Exec(ctx, "DELETE FROM commercial_expenses WHERE commercial_estimation_id IN (SELECT id FROM commercial_estimations WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001')")
+	_, _ = pool.Exec(ctx, "DELETE FROM commercial_resources WHERE commercial_estimation_id IN (SELECT id FROM commercial_estimations WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001')")
+	_, _ = pool.Exec(ctx, "DELETE FROM commercial_estimations WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001'")
+	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001'")
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id LIKE 'L-COMM-%' OR lead_id = 'L-7001' OR email LIKE 'test_comm_%' OR email = 'jdoe@acme.com'")
 	_, _ = pool.Exec(ctx, "DELETE FROM users WHERE email LIKE 'test_comm_%'")
 
 	// Setup test users
@@ -268,13 +268,15 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 		Role:         models.RoleAdmin,
 		IsActive:     true,
 	})
-	_ = gormDB.Create(&models.User{
+	userSahil := &models.User{
 		Name:         "KAM Sahil",
 		Email:        "test_comm_sahil@pmrg.com",
 		PasswordHash: "hash",
 		Role:         models.RoleSalesExecutive,
 		IsActive:     true,
-	})
+	}
+	_ = gormDB.Create(userSahil)
+
 	_ = gormDB.Create(&models.User{
 		Name:         "KAM Other",
 		Email:        "test_comm_other@pmrg.com",
@@ -293,6 +295,8 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 		Phone:       strPtr("9876543210"),
 		OfficePhone: strPtr("9123456780"),
 		Owner:       strPtr("KAM Sahil"),
+		AssignedTo:  &userSahil.ID,
+		CreatedBy:   &userSahil.ID,
 		Stage:       strPtr("Proposal"),
 		Status:      strPtr("Interested"),
 		Sentiment:   strPtr("Positive"),

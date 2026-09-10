@@ -537,7 +537,7 @@ func (s *AuthService) VerifyMFA(ctx context.Context, mfaPendingToken, otp string
 	}
 
 	otpHash := helpers.HashOTP(otp)
-	
+
 	// Ensure to use FindValid from the repo handling mfa_otps.
 	otpRecord, err := s.otpRepo.FindValid(ctx, claims.UserID, otpHash)
 	if err != nil {
@@ -897,8 +897,7 @@ func formatRoleDisplay(role string) string {
 	default:
 		return role
 	}
-} 
-
+}
 
 func (s *AuthService) Logout(ctx context.Context, rawRefreshToken string, currentUserID uuid.UUID) error {
 	tokenHash := helpers.HashRefreshToken(rawRefreshToken)

@@ -36,6 +36,7 @@ type LeadService interface {
 	GetMasterStages(ctx context.Context) ([]*models.LeadStage, error)
 	ListLeads(ctx context.Context, callerID uuid.UUID, callerRole string, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]models.LeadResponse, *models.PaginationMetadata, error)
 	GetLead(ctx context.Context, callerID uuid.UUID, callerRole string, leadID string) (*models.LeadResponse, error)
+	GetHeatMap(ctx context.Context) (*models.HeatMapResponse, error)
 
 	CreateActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, leadID string, req models.CreateActivityRequest) (*models.ActivityResponse, error)
 	CompleteActivity(ctx context.Context, callerID uuid.UUID, callerRole, callerEmail string, activityID uint, completed bool) (*models.ActivityResponse, error)
@@ -159,14 +160,19 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 		}
 	}
 
-	createdByUUID := callerID
+	var createdByUUID *uuid.UUID
+	if callerID != uuid.Nil {
+		createdByUUID = &callerID
+	}
 	var assignedToUUID *uuid.UUID
 
 	callerUser, _ := s.userRepo.FindByID(ctx, callerID)
 
 	if callerRole == models.RoleSalesExecutive {
 		// Sales Executive can only create leads assigned to themselves
-		assignedToUUID = &callerID
+		if callerID != uuid.Nil {
+			assignedToUUID = &callerID
+		}
 		if callerUser != nil {
 			req.Owner = callerUser.Name
 		}
@@ -182,7 +188,9 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 		if err != nil || targetUser == nil {
 			return nil, helpers.ErrBadRequest("assigned user does not exist")
 		}
-		assignedToUUID = &parsedAssigned
+		if parsedAssigned != uuid.Nil {
+			assignedToUUID = &parsedAssigned
+		}
 		req.Owner = targetUser.Name
 	} else if req.Owner != "" {
 		exists, err := s.leadRepo.CheckUserExists(req.Owner)
@@ -197,13 +205,17 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 					return nil, helpers.ErrForbidden("cannot assign lead to owner outside authorized team")
 				}
 				targetID := u.ID
-				assignedToUUID = &targetID
+				if targetID != uuid.Nil {
+					assignedToUUID = &targetID
+				}
 				break
 			}
 		}
 	} else {
 		// Default assigned to caller
-		assignedToUUID = &callerID
+		if callerID != uuid.Nil {
+			assignedToUUID = &callerID
+		}
 		if callerUser != nil {
 			req.Owner = callerUser.Name
 		}
@@ -218,7 +230,7 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 		OfficePhone:        &req.OfficePhone,
 		OfficePhoneCountry: &req.OfficePhoneCountry,
 		Owner:              &req.Owner,
-		CreatedBy:          &createdByUUID,
+		CreatedBy:          createdByUUID,
 		AssignedTo:         assignedToUUID,
 		Stage:              &req.Stage,
 		Status:             &req.Status,
@@ -1173,7 +1185,10 @@ func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, c
 		batchEmails[emailTrimmed] = true
 		batchCompanies[strings.ToLower(companyTrimmed)] = true
 
-		createdByUUID := callerID
+		var createdByUUID *uuid.UUID
+		if callerID != uuid.Nil {
+			createdByUUID = &callerID
+		}
 		lead := &models.Lead{
 			Company:            companyTrimmed,
 			Contact:            &item.Contact,
@@ -1182,7 +1197,7 @@ func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, c
 			OfficePhone:        &item.OfficePhone,
 			OfficePhoneCountry: &item.OfficePhoneCountry,
 			Owner:              &effectiveOwner,
-			CreatedBy:          &createdByUUID,
+			CreatedBy:          createdByUUID,
 			AssignedTo:         leadAssignedTo,
 			Stage:              &normalizedStage,
 			Status:             &item.Status,
@@ -1273,6 +1288,81 @@ func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, c
 		Created: created,
 		Failed:  failed,
 	}, nil
+}
+
+func (s *leadService) GetHeatMap(ctx context.Context) (*models.HeatMapResponse, error) {
+	rows, err := s.leadRepo.GetHeatMapAggregation(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	stages, err := s.leadRepo.FindStages(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var stageNames []string
+	for _, st := range stages {
+		stageNames = append(stageNames, st.Name)
+	}
+
+	repMap := make(map[string]map[string]models.HeatMapCell)
+	stageTotals := make(map[string]models.HeatMapCell)
+	grandTotal := models.HeatMapCell{Stage: "Grand Total"}
+
+	for _, st := range stageNames {
+		stageTotals[st] = models.HeatMapCell{Stage: st, Value: 0, Leads: 0}
+	}
+
+	for _, row := range rows {
+		if _, ok := repMap[row.Owner]; !ok {
+			repMap[row.Owner] = make(map[string]models.HeatMapCell)
+			for _, st := range stageNames {
+				repMap[row.Owner][st] = models.HeatMapCell{Stage: st, Value: 0, Leads: 0}
+			}
+		}
+
+		if _, ok := repMap[row.Owner][row.Stage]; ok {
+			cell := repMap[row.Owner][row.Stage]
+			cell.Value += row.Value
+			cell.Leads += row.Count
+			repMap[row.Owner][row.Stage] = cell
+
+			stTotal := stageTotals[row.Stage]
+			stTotal.Value += row.Value
+			stTotal.Leads += row.Count
+			stageTotals[row.Stage] = stTotal
+
+			grandTotal.Value += row.Value
+			grandTotal.Leads += row.Count
+		}
+	}
+
+	var repRows []models.HeatMapRepRow
+	for rep, stMap := range repMap {
+		repRow := models.HeatMapRepRow{Rep: rep}
+		repTotal := models.HeatMapCell{Stage: "Total", Value: 0, Leads: 0}
+		for _, stName := range stageNames {
+			cell := stMap[stName]
+			repRow.Stages = append(repRow.Stages, cell)
+			repTotal.Value += cell.Value
+			repTotal.Leads += cell.Leads
+		}
+		repRow.Total = repTotal
+		repRows = append(repRows, repRow)
+	}
+
+	var stageTotalArr []models.HeatMapCell
+	for _, stName := range stageNames {
+		stageTotalArr = append(stageTotalArr, stageTotals[stName])
+	}
+
+	resp := &models.HeatMapResponse{
+		Reps:       repRows,
+		StageTotal: stageTotalArr,
+		GrandTotal: grandTotal,
+	}
+	return resp, nil
 }
 
 func (s *leadService) GetActivities(ctx context.Context, callerID uuid.UUID, callerRole string, query models.GetActivitiesQuery) (*models.ActivitiesFeedResponse, error) {

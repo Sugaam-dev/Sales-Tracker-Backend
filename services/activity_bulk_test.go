@@ -42,8 +42,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 	leadService := NewLeadService(leadRepo, userRepo)
 
 	// Clean up existing test data
-	_, _ = pool.Exec(ctx, "DELETE FROM activities")
-	_, _ = pool.Exec(ctx, "DELETE FROM leads")
+	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id LIKE 'L-9%' OR lead_id LIKE 'L-ACT-%'")
+	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE lead_id LIKE 'L-9%' OR email LIKE 'test_%' OR email LIKE '%@pmrgsolution.com'")
 	_, _ = pool.Exec(ctx, "DELETE FROM users WHERE email LIKE 'test_%'")
 
 	// Setup users
@@ -90,6 +90,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		Phone:             strPtr("9876543210"),
 		OfficePhone:       strPtr("9123456780"),
 		Owner:             strPtr("KAM One"),
+		AssignedTo:        &kamUser1.ID,
+		CreatedBy:         &kamUser1.ID,
 		Stage:             strPtr("Prospecting"),
 		Status:            strPtr("Open"),
 		Sentiment:         strPtr("Positive"),
@@ -108,6 +110,8 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 		Phone:             strPtr("9876543210"),
 		OfficePhone:       strPtr("9123456780"),
 		Owner:             strPtr("KAM One"),
+		AssignedTo:        &kamUser1.ID,
+		CreatedBy:         &kamUser1.ID,
 		Stage:             strPtr("Prospecting"),
 		Status:            strPtr("Open"),
 		Sentiment:         strPtr("Positive"),

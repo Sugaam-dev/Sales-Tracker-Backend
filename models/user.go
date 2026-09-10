@@ -46,24 +46,24 @@ func IsValidRole(role string) bool {
 }
 
 type User struct {
-	ID             uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Name           string     `gorm:"type:varchar;not null"`
-	Email          string     `gorm:"type:varchar;uniqueIndex;not null"`
-	Mobile         *string    `gorm:"type:varchar;uniqueIndex"`
-	PasswordHash   string     `gorm:"type:varchar;not null"`
-	Role           string     `gorm:"type:varchar;not null"` // admin | sales_manager | sales_executive | leader
+	ID                     uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name                   string     `gorm:"type:varchar;not null"`
+	Email                  string     `gorm:"type:varchar;uniqueIndex;not null"`
+	Mobile                 *string    `gorm:"type:varchar;uniqueIndex"`
+	PasswordHash           string     `gorm:"type:varchar;not null"`
+	Role                   string     `gorm:"type:varchar;not null"` // admin | sales_manager | sales_executive | leader
 	ManagerID              *uuid.UUID `gorm:"type:uuid;index"`
 	IsFirstLogin           bool       `gorm:"not null;default:true"`
 	PasswordChangeRequired bool       `gorm:"not null;default:true"`
 	EmailVerified          bool       `gorm:"not null;default:false"`
-	MobileVerified bool       `gorm:"not null;default:false"`
-	MFAEnabled     bool       `gorm:"not null;default:false"`
-	MFAMethod      *string    `gorm:"type:varchar"` // "email" | "sms"
-	SSOProvider    *string    `gorm:"type:varchar"`
-	SSOSubjectID   *string    `gorm:"type:varchar"`
-	IsActive       bool       `gorm:"not null;default:true"`
-	CreatedAt      time.Time  `gorm:"not null;autoCreateTime"`
-	UpdatedAt      time.Time  `gorm:"not null;autoUpdateTime"`
+	MobileVerified         bool       `gorm:"not null;default:false"`
+	MFAEnabled             bool       `gorm:"not null;default:false"`
+	MFAMethod              *string    `gorm:"type:varchar"` // "email" | "sms"
+	SSOProvider            *string    `gorm:"type:varchar"`
+	SSOSubjectID           *string    `gorm:"type:varchar"`
+	IsActive               bool       `gorm:"not null;default:true"`
+	CreatedAt              time.Time  `gorm:"not null;autoCreateTime"`
+	UpdatedAt              time.Time  `gorm:"not null;autoUpdateTime"`
 }
 
 func (User) TableName() string { return "users" }

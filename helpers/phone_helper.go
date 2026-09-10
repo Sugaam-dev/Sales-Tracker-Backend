@@ -16,7 +16,21 @@ func ValidatePhoneNumber(phone string, countryCode string) error {
 		return errors.New("Phone number is required.")
 	}
 
-	// 1. Strict Leading Zero Check
+	// 1. Strict Digits-Only Check (with optional leading '+')
+	cleanDigits := trimmedPhone
+	if strings.HasPrefix(cleanDigits, "+") {
+		cleanDigits = cleanDigits[1:]
+	}
+	if len(cleanDigits) == 0 {
+		return errors.New("Phone number must contain only numbers.")
+	}
+	for _, ch := range cleanDigits {
+		if ch < '0' || ch > '9' {
+			return errors.New("Phone number must contain only numbers.")
+		}
+	}
+
+	// 2. Strict Leading Zero Check
 	// If national number starts with 0 (e.g. 0987654321, 012345), reject immediately.
 	// Strip leading '+' if user typed full international number directly into phone field to inspect national digits.
 	nationalDigits := trimmedPhone

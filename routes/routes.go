@@ -1,14 +1,14 @@
 package routes
 
 import (
-	"net/http"
-	"github.com/gin-gonic/gin"
 	"crm-auth-service/controllers"
 	"crm-auth-service/helpers"
 	"crm-auth-service/middleware"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 	v1 "crm-auth-service/routes/api/v1"
+	"github.com/gin-gonic/gin"
+	"net/http"
 )
 
 // RegisterRoutes mounts all route groups on the given engine.
@@ -17,6 +17,8 @@ func RegisterRoutes(
 	authController *controllers.AuthController,
 	leadController *controllers.LeadController,
 	commercialController *controllers.CommercialController,
+	taskController *controllers.TaskController,
+	reportController *controllers.ReportController,
 	analyticsController *controllers.AnalyticsController,
 	jwtManager *helpers.JWTManager,
 	userRepo repository.UserRepository,
@@ -28,6 +30,24 @@ func RegisterRoutes(
 	v1.RegisterAuthRoutes(apiV1, authController, jwtManager)
 	v1.RegisterLeadRoutes(apiV1, leadController, jwtManager)
 	v1.RegisterCommercialRoutes(apiV1, commercialController, jwtManager)
+
+	// Task routes
+	tasks := apiV1.Group("/tasks")
+	tasks.Use(middleware.AuthMiddleware(jwtManager))
+	{
+		tasks.GET("", taskController.GetTasks)
+		tasks.POST("", taskController.CreateTask)
+		tasks.PATCH("/:id/status", taskController.UpdateTaskStatus)
+		tasks.DELETE("/:id", taskController.DeleteTask)
+	}
+
+	// Report routes
+	reports := apiV1.Group("/reports")
+	reports.Use(middleware.AuthMiddleware(jwtManager))
+	{
+		reports.GET("/heat-map", reportController.GetHeatMap)
+	}
+
 	v1.RegisterAnalyticsRoutes(apiV1, analyticsController, jwtManager)
 
 	// User management routes

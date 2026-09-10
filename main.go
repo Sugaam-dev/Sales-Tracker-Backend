@@ -45,12 +45,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Migrate Lead, Commercial, and RBAC models
+	// Migrate Lead, Commercial, Task, and RBAC models
 	gormDB.AutoMigrate(
 		&models.Lead{}, &models.Activity{}, &models.LeadStage{},
 		&models.CommercialEstimation{}, &models.CommercialResource{},
 		&models.CommercialExpense{}, &models.SDLCAllocation{},
 		&models.User{}, &models.LeaderDelegation{},
+		&models.Task{},
 	)
 	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
 
@@ -62,6 +63,7 @@ func main() {
 	mobileOTPRepo := repository.NewMobileOTPRepository(db)
 	forgotPasswordRepo := repository.NewForgotPasswordRepository(db)
 	oauthStateRepo := repository.NewOAuthStateRepository(db)
+	taskRepo := repository.NewTaskRepository(gormDB)
 
 	// Dependency Injection: Utility helpers.
 	jwtManager := helpers.NewJWTManager(cfg.JWT)
@@ -98,6 +100,13 @@ func main() {
 	leadService := services.NewLeadService(leadRepo, userRepo)
 	leadController := controllers.NewLeadController(leadService, log)
 
+	// Task Module dependencies
+	taskService := services.NewTaskService(taskRepo)
+	taskController := controllers.NewTaskController(taskService, log)
+
+	// Report Module dependencies
+	reportController := controllers.NewReportController(leadService, log)
+
 	// Commercial Module dependencies
 	commRepo := repository.NewCommercialRepository(db, gormDB)
 	commService := services.NewCommercialService(commRepo, leadRepo, userRepo)
@@ -118,7 +127,17 @@ func main() {
 	router.Use(middleware.CORSMiddleware())
 
 	// Bind application endpoint route mappings.
-	routes.RegisterRoutes(router, authController, leadController, commController, analyticsController, jwtManager, userRepo)
+	routes.RegisterRoutes(
+		router,
+		authController,
+		leadController,
+		commController,
+		taskController,
+		reportController,
+		analyticsController,
+		jwtManager,
+		userRepo,
+	)
 
 	log.Info("starting server", "port", cfg.Server.Port, "env", cfg.Server.Env)
 	if err := router.Run(":" + cfg.Server.Port); err != nil {
