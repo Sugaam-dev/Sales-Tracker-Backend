@@ -14,6 +14,8 @@ type CreateLeadRequest struct {
 	OfficePhoneCountry       string `json:"officePhoneCountry"`
 	Owner                    string `json:"owner"`
 	LeadOwner                string `json:"leadOwner"`
+	CreatedBy                string `json:"createdBy"`
+	AssignedTo               string `json:"assignedTo"`
 	Industry                 string `json:"industry"`
 	Size                     string `json:"size"`
 	Region                   string `json:"region"`

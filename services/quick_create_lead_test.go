@@ -10,6 +10,7 @@ import (
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -35,11 +36,17 @@ func TestQuickCreateLeadValidationUnits(t *testing.T) {
 		if count := helpers.CountWords("one\ntwo\tthree\r\nfour"); count != 4 {
 			t.Errorf("Expected 4 words for whitespace delimited string, got %d", count)
 		}
-		if count := helpers.CountWords(generateWords(50)); count != 50 {
-			t.Errorf("Expected 50 words, got %d", count)
+		if count := helpers.CountWords(generateWords(9)); count != 9 {
+			t.Errorf("Expected 9 words, got %d", count)
+		}
+		if count := helpers.CountWords(generateWords(10)); count != 10 {
+			t.Errorf("Expected 10 words, got %d", count)
 		}
 		if count := helpers.CountWords(generateWords(200)); count != 200 {
 			t.Errorf("Expected 200 words, got %d", count)
+		}
+		if count := helpers.CountWords(generateWords(201)); count != 201 {
+			t.Errorf("Expected 201 words, got %d", count)
 		}
 	})
 
@@ -146,7 +153,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		// Obsolete: "Product Request" => INVALID
 		req1 := baseReq
 		req1.RequestType = "Product Request"
-		_, err := leadService.CreateLead(req1)
+		_, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req1)
 		if err == nil {
 			t.Error("Expected error for obsolete 'Product Request', got nil")
 		}
@@ -154,7 +161,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		// Obsolete: "Service Request" => INVALID
 		req2 := baseReq
 		req2.RequestType = "Service Request"
-		_, err = leadService.CreateLead(req2)
+		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req2)
 		if err == nil {
 			t.Error("Expected error for obsolete 'Service Request', got nil")
 		}
@@ -164,7 +171,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		req3.CompanyName = "ReqType Test Corp ITProd"
 		req3.RequestType = "IT Product"
 		req3.Email = "quick_test_itproduct@company.org"
-		resp3, err := leadService.CreateLead(req3)
+		resp3, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req3)
 		if err != nil {
 			t.Fatalf("Expected valid creation for 'IT Product', got err: %v", err)
 		}
@@ -177,7 +184,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		req4.CompanyName = "ReqType Test Corp ITServ"
 		req4.RequestType = "IT Service"
 		req4.Email = "quick_test_itservice@company.in"
-		resp4, err := leadService.CreateLead(req4)
+		resp4, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req4)
 		if err != nil {
 			t.Fatalf("Expected valid creation for 'IT Service', got err: %v", err)
 		}
@@ -202,30 +209,30 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		reqEmpty.CompanyName = "Word Count Corp Empty"
 		reqEmpty.Email = "quick_test_empty@company.net"
 		reqEmpty.RequestDetails = "   "
-		_, err := leadService.CreateLead(reqEmpty)
+		_, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", reqEmpty)
 		if err == nil {
 			t.Error("Expected error for whitespace-only requestDetails, got nil")
 		}
 
-		// 49 words => INVALID
-		req49 := baseReq
-		req49.CompanyName = "Word Count Corp 49"
-		req49.Email = "quick_test_49@company.net"
-		req49.RequestDetails = generateWords(49)
-		_, err = leadService.CreateLead(req49)
-		if err == nil || !strings.Contains(err.Error(), "at least 50 words") {
-			t.Errorf("Expected 'at least 50 words' error for 49 words, got: %v", err)
+		// 9 words => INVALID
+		req9 := baseReq
+		req9.CompanyName = "Word Count Corp 9"
+		req9.Email = "quick_test_9@company.net"
+		req9.RequestDetails = generateWords(9)
+		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req9)
+		if err == nil || !strings.Contains(err.Error(), "between 10 and 200 words") {
+			t.Errorf("Expected 'between 10 and 200 words' error for 9 words, got: %v", err)
 		}
 
-		// 50 words => VALID
-		req50 := baseReq
-		req50.CompanyName = "Word Count Corp 50"
-		req50.Email = "quick_test_50@company.net"
-		req50.RequestDetails = generateWords(50)
-		resp50, err := leadService.CreateLead(req50)
+		// 10 words => VALID
+		req10 := baseReq
+		req10.CompanyName = "Word Count Corp 10"
+		req10.Email = "quick_test_10@company.net"
+		req10.RequestDetails = generateWords(10)
+		resp10, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req10)
 		if err != nil {
-			t.Errorf("Expected 50 words to be valid, got err: %v", err)
-		} else if resp50.RequestDetails == nil || *resp50.RequestDetails != req50.RequestDetails {
+			t.Errorf("Expected 10 words to be valid, got err: %v", err)
+		} else if resp10.RequestDetails == nil || *resp10.RequestDetails != req10.RequestDetails {
 			t.Errorf("RequestDetails not preserved on response")
 		}
 
@@ -235,7 +242,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		req200.Email = "quick_test_200@company.net"
 		words200 := strings.Split(generateWords(200), " ")
 		req200.RequestDetails = strings.Join(words200, "   \n\t  ")
-		resp200, err := leadService.CreateLead(req200)
+		resp200, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req200)
 		if err != nil {
 			t.Errorf("Expected 200 words with whitespace to be valid, got err: %v", err)
 		} else if resp200.RequestDetails == nil {
@@ -247,9 +254,9 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		req201.CompanyName = "Word Count Corp 201"
 		req201.Email = "quick_test_201@company.net"
 		req201.RequestDetails = generateWords(201)
-		_, err = leadService.CreateLead(req201)
-		if err == nil || !strings.Contains(err.Error(), "cannot exceed 200 words") {
-			t.Errorf("Expected 'cannot exceed 200 words' error for 201 words, got: %v", err)
+		_, err = leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req201)
+		if err == nil || !strings.Contains(err.Error(), "between 10 and 200 words") {
+			t.Errorf("Expected 'between 10 and 200 words' error for 201 words, got: %v", err)
 		}
 	})
 
@@ -280,7 +287,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 			req := baseReq
 			req.CompanyName = item.company
 			req.Email = item.email
-			_, err := leadService.CreateLead(req)
+			_, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req)
 			if err != nil {
 				t.Errorf("Expected email %s to be valid, got err: %v", item.email, err)
 			}
@@ -298,7 +305,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 			req := baseReq
 			req.CompanyName = "Invalid Email Corp"
 			req.Email = email
-			_, err := leadService.CreateLead(req)
+			_, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req)
 			if err == nil {
 				t.Errorf("Expected invalid email %s to fail, but got success (idx: %d)", email, idx)
 			}
@@ -319,7 +326,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 
 		// Leading Zero => INVALID
 		baseReq.ContactNumber = "0987654321"
-		_, err := leadService.CreateLead(baseReq)
+		_, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", baseReq)
 		if err == nil || !strings.Contains(err.Error(), "must not start with 0") {
 			t.Errorf("Expected 'must not start with 0' error, got: %v", err)
 		}
@@ -327,7 +334,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 		// Valid India Number => VALID
 		baseReq.Email = "quick_test_phone_ok@company.com"
 		baseReq.ContactNumber = "9876543210"
-		resp, err := leadService.CreateLead(baseReq)
+		resp, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", baseReq)
 		if err != nil {
 			t.Fatalf("Expected valid phone to succeed, got: %v", err)
 		}
@@ -350,7 +357,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 			Priority:       "High",
 		}
 
-		created, err := leadService.CreateLead(req)
+		created, err := leadService.CreateLead(ctx, uuid.Nil, models.RoleAdmin, "admin@example.com", req)
 		if err != nil {
 			t.Fatalf("CreateLead failed: %v", err)
 		}

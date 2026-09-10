@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"crm-auth-service/helpers"
 	"crm-auth-service/models"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,8 +14,8 @@ import (
 )
 
 type AnalyticsRepository interface {
-	GetDashboardSummary(ctx context.Context, owner, region string) (*models.DashboardSummaryData, error)
-	GetReportsAnalytics(ctx context.Context, dateFrom, dateTo *time.Time, owner, region string) (*models.ReportsAnalyticsData, error)
+	GetDashboardSummary(ctx context.Context, scope helpers.DataScope, owner, region string) (*models.DashboardSummaryData, error)
+	GetReportsAnalytics(ctx context.Context, scope helpers.DataScope, dateFrom, dateTo *time.Time, owner, region string) (*models.ReportsAnalyticsData, error)
 }
 
 type analyticsRepository struct {
@@ -29,7 +30,7 @@ func NewAnalyticsRepository(pool *pgxpool.Pool, db *gorm.DB) AnalyticsRepository
 	}
 }
 
-func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, owner, region string) (*models.DashboardSummaryData, error) {
+func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, scope helpers.DataScope, owner, region string) (*models.DashboardSummaryData, error) {
 	data := &models.DashboardSummaryData{
 		StageDistribution:  make([]models.StageDistributionItem, 0),
 		RegionDistribution: make([]models.RegionDistributionItem, 0),
@@ -41,6 +42,12 @@ func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, owner, re
 	argIdx := 1
 
 	leadWhereClauses = append(leadWhereClauses, "deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		leadWhereClauses = append(leadWhereClauses, fmt.Sprintf("(assigned_to = ANY($%d) OR created_by = ANY($%d))", argIdx, argIdx))
+		leadArgs = append(leadArgs, scope.AllowedUserIDs)
+		argIdx++
+	}
 
 	if strings.TrimSpace(owner) != "" {
 		leadWhereClauses = append(leadWhereClauses, fmt.Sprintf("LOWER(owner) = LOWER($%d)", argIdx))
@@ -96,6 +103,12 @@ func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, owner, re
 	actArgIdx := 1
 
 	actWhereClauses = append(actWhereClauses, "a.completed = false", "a.due_date < CURRENT_TIMESTAMP", "l.deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		actWhereClauses = append(actWhereClauses, fmt.Sprintf("(l.assigned_to = ANY($%d) OR l.created_by = ANY($%d))", actArgIdx, actArgIdx))
+		actArgs = append(actArgs, scope.AllowedUserIDs)
+		actArgIdx++
+	}
 
 	if strings.TrimSpace(owner) != "" {
 		actWhereClauses = append(actWhereClauses, fmt.Sprintf("LOWER(l.owner) = LOWER($%d)", actArgIdx))
@@ -237,7 +250,7 @@ func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, owner, re
 	return data, nil
 }
 
-func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, dateFrom, dateTo *time.Time, owner, region string) (*models.ReportsAnalyticsData, error) {
+func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope helpers.DataScope, dateFrom, dateTo *time.Time, owner, region string) (*models.ReportsAnalyticsData, error) {
 	data := &models.ReportsAnalyticsData{
 		PipelineByStage:   make([]models.StageDistributionItem, 0),
 		PipelineByRegion:  make([]models.RegionDistributionItem, 0),
@@ -252,6 +265,12 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, dateFrom,
 	argIdx := 1
 
 	leadWhere = append(leadWhere, "deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		leadWhere = append(leadWhere, fmt.Sprintf("(assigned_to = ANY($%d) OR created_by = ANY($%d))", argIdx, argIdx))
+		leadArgs = append(leadArgs, scope.AllowedUserIDs)
+		argIdx++
+	}
 
 	if strings.TrimSpace(owner) != "" {
 		leadWhere = append(leadWhere, fmt.Sprintf("LOWER(owner) = LOWER($%d)", argIdx))
@@ -310,6 +329,10 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, dateFrom,
 	// Lead args without date params
 	var baseArgsOnly []any
 	baseArgCount := 0
+	if !scope.IsUnrestricted {
+		baseArgsOnly = append(baseArgsOnly, scope.AllowedUserIDs)
+		baseArgCount++
+	}
 	if strings.TrimSpace(owner) != "" {
 		baseArgsOnly = append(baseArgsOnly, strings.TrimSpace(owner))
 		baseArgCount++
@@ -513,6 +536,12 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, dateFrom,
 	actArgNum := 1
 
 	actWhere = append(actWhere, "l.deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		actWhere = append(actWhere, fmt.Sprintf("(l.assigned_to = ANY($%d) OR l.created_by = ANY($%d))", actArgNum, actArgNum))
+		actArgs = append(actArgs, scope.AllowedUserIDs)
+		actArgNum++
+	}
 
 	if strings.TrimSpace(owner) != "" {
 		actWhere = append(actWhere, fmt.Sprintf("LOWER(l.owner) = LOWER($%d)", actArgNum))

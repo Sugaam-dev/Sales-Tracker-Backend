@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"crm-auth-service/helpers"
+	"crm-auth-service/middleware"
 	"crm-auth-service/models"
 	"crm-auth-service/services"
 )
@@ -61,6 +62,12 @@ func (ctrl *LeadController) handleServiceError(c *gin.Context, err error) {
 // ---------------------------------------------
 
 func (ctrl *LeadController) CreateLead(c *gin.Context) {
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	var req models.CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fmt.Println("CREATE LEAD VALIDATION ERROR:", err.Error())
@@ -72,7 +79,7 @@ func (ctrl *LeadController) CreateLead(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.CreateLead(req)
+	resp, err := ctrl.service.CreateLead(c.Request.Context(), callerID, callerRole, callerEmail, req)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -86,14 +93,10 @@ func (ctrl *LeadController) CreateLead(c *gin.Context) {
 
 func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 	id := c.Param("id")
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
-	}
-
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	if !leadIDRegex.MatchString(id) {
@@ -111,7 +114,7 @@ func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.UpdateLead(id, userRole, userEmail, req)
+	resp, err := ctrl.service.UpdateLead(c.Request.Context(), callerID, callerRole, callerEmail, id, req)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -125,12 +128,13 @@ func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 
 func (ctrl *LeadController) DeleteLead(c *gin.Context) {
 	id := c.Param("id")
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
-	err := ctrl.service.DeleteLead(id, userRole)
+	err = ctrl.service.DeleteLead(c.Request.Context(), callerID, callerRole, callerEmail, id)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -144,17 +148,13 @@ func (ctrl *LeadController) DeleteLead(c *gin.Context) {
 
 func (ctrl *LeadController) GetLeadActivities(c *gin.Context) {
 	id := c.Param("id")
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
-	}
-
-	resp, err := ctrl.service.GetLeadActivities(id, userRole, userEmail)
+	resp, err := ctrl.service.GetLeadActivities(c.Request.Context(), callerID, callerRole, callerEmail, id)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -175,7 +175,13 @@ func (ctrl *LeadController) GetLeadActivities(c *gin.Context) {
 // ---------------------------------------------
 
 func (ac *LeadController) GetCurrentUsers(c *gin.Context) {
-	users, err := ac.service.GetCurrentUsers(c.Request.Context())
+	callerID, callerRole, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	users, err := ac.service.GetCurrentUsers(c.Request.Context(), callerID, callerRole)
 	if err != nil {
 		helpers.RespondError(c, err, ac.log)
 		return
@@ -201,6 +207,12 @@ func (ac *LeadController) GetMasterStages(c *gin.Context) {
 }
 
 func (ac *LeadController) ListLeads(c *gin.Context) {
+	callerID, callerRole, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "5")
 	search := c.Query("search")
@@ -222,7 +234,7 @@ func (ac *LeadController) ListLeads(c *gin.Context) {
 		return
 	}
 
-	leads, pagination, err := ac.service.ListLeads(c.Request.Context(), page, limit, search, owner, priority, stage, sortBy, sortOrder)
+	leads, pagination, err := ac.service.ListLeads(c.Request.Context(), callerID, callerRole, page, limit, search, owner, priority, stage, sortBy, sortOrder)
 	if err != nil {
 		helpers.RespondError(c, err, ac.log)
 		return
@@ -237,16 +249,25 @@ func (ac *LeadController) ListLeads(c *gin.Context) {
 
 func (ac *LeadController) GetLead(c *gin.Context) {
 	id := c.Param("id")
+	callerID, callerRole, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
 	if !leadIDRegex.MatchString(id) {
 		helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
 		return
 	}
 
-	lead, err := ac.service.GetLead(c.Request.Context(), id)
+	lead, err := ac.service.GetLead(c.Request.Context(), callerID, callerRole, id)
 	if err != nil {
-		if err == helpers.ErrNotFound {
+		if errors.Is(err, services.ErrNotFound) || errors.Is(err, helpers.ErrNotFound) {
 			helpers.ErrorResponse(c, http.StatusNotFound, "Lead not found")
+			return
+		}
+		if errors.Is(err, services.ErrUnauthorized) {
+			helpers.ErrorResponse(c, http.StatusForbidden, "Unauthorized to access this lead")
 			return
 		}
 		helpers.RespondError(c, err, ac.log)
@@ -261,15 +282,10 @@ func (ac *LeadController) GetLead(c *gin.Context) {
 
 func (ctrl *LeadController) CreateActivity(c *gin.Context) {
 	leadID := c.Param("id")
-
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
-	}
-
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	var req models.CreateActivityRequest
@@ -282,7 +298,7 @@ func (ctrl *LeadController) CreateActivity(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.CreateActivity(leadID, userRole, userEmail, req)
+	resp, err := ctrl.service.CreateActivity(c.Request.Context(), callerID, callerRole, callerEmail, leadID, req)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -302,14 +318,10 @@ func (ctrl *LeadController) CompleteActivity(c *gin.Context) {
 		return
 	}
 
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
-	}
-
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	var req models.CompleteActivityRequest
@@ -322,7 +334,7 @@ func (ctrl *LeadController) CompleteActivity(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.CompleteActivity(uint(id), userRole, userEmail, req.Completed)
+	resp, err := ctrl.service.CompleteActivity(c.Request.Context(), callerID, callerRole, callerEmail, uint(id), req.Completed)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -335,14 +347,10 @@ func (ctrl *LeadController) CompleteActivity(c *gin.Context) {
 }
 
 func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
-	userEmail := ""
-	if email, exists := c.Get("email"); exists {
-		userEmail = email.(string)
-	}
-
-	userRole := ""
-	if role, exists := c.Get("role"); exists {
-		userRole = role.(string)
+	callerID, callerRole, callerEmail, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
 	}
 
 	var req models.BulkCreateLeadsRequest
@@ -355,7 +363,7 @@ func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
 		return
 	}
 
-	resp, err := ctrl.service.BulkCreateLeads(userRole, userEmail, req)
+	resp, err := ctrl.service.BulkCreateLeads(c.Request.Context(), callerID, callerRole, callerEmail, req)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -370,6 +378,12 @@ func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
 }
 
 func (ctrl *LeadController) GetActivities(c *gin.Context) {
+	callerID, callerRole, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
 	var query models.GetActivitiesQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
 		helpers.ErrorResponse(c, http.StatusBadRequest, "Invalid query parameters")
@@ -405,7 +419,7 @@ func (ctrl *LeadController) GetActivities(c *gin.Context) {
 	query.DealSize = c.Query("deal_size")
 	query.DueStatus = c.Query("due_status")
 
-	resp, err := ctrl.service.GetActivities(c.Request.Context(), query)
+	resp, err := ctrl.service.GetActivities(c.Request.Context(), callerID, callerRole, query)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return
@@ -464,7 +478,13 @@ func (ctrl *LeadController) LogActivity(c *gin.Context) {
 }
 
 func (ctrl *LeadController) GetActivitiesSummary(c *gin.Context) {
-	summary, err := ctrl.service.GetActivitiesSummary(c.Request.Context())
+	callerID, callerRole, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	summary, err := ctrl.service.GetActivitiesSummary(c.Request.Context(), callerID, callerRole)
 	if err != nil {
 		ctrl.handleServiceError(c, err)
 		return

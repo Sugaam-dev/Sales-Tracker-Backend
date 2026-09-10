@@ -26,7 +26,7 @@ type LeadRepository interface {
 	GetUserNameByEmail(email string) (string, error)
 
 	FindStages(ctx context.Context) ([]*models.LeadStage, error)
-	FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
+	FindLeads(ctx context.Context, scope helpers.DataScope, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error)
 	FindByID(ctx context.Context, leadID string) (*models.Lead, error)
 	UpdateLeadStatusAndStage(ctx context.Context, leadID string, status, stage string, lostReason *string) error
 	GetHeatMapAggregation(ctx context.Context) ([]models.LeadAggregationRow, error)
@@ -39,9 +39,9 @@ type LeadRepository interface {
 	CheckUserActive(name string) (bool, error)
 	CheckStageExistsCaseInsensitive(stage string) (bool, string, error)
 
-	FindActivitiesFeed(ctx context.Context, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error)
+	FindActivitiesFeed(ctx context.Context, scope helpers.DataScope, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error)
 	FindLeadByCompanyOrContact(ctx context.Context, name string) (*models.Lead, error)
-	GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error)
+	GetActivitiesSummary(ctx context.Context, scope helpers.DataScope) (*models.ActivitySummaryData, error)
 }
 
 type leadRepository struct {
@@ -200,12 +200,19 @@ func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, e
 	return stages, nil
 }
 
-func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error) {
+func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope, page, limit int, search, owner, priority, stage, sortBy, sortOrder string) ([]*models.Lead, int64, error) {
 	var whereClauses []string
 	var args []any
 	argCount := 1
 
 	whereClauses = append(whereClauses, "deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("(assigned_to = ANY(%s) OR created_by = ANY(%s))", placeholder, placeholder))
+		args = append(args, scope.AllowedUserIDs)
+		argCount++
+	}
 
 	if search != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
@@ -265,7 +272,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 	limitOffsetSQL := fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", orderByCol, dir, argCount, argCount+1)
 	args = append(args, limit, offset)
 
-	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_at, updated_at 
+	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_by, assigned_to, created_at, updated_at 
 				  FROM leads` + whereSQL + limitOffsetSQL
 
 	rows, err := r.pgx.Query(ctx, dataQuery, args...)
@@ -286,6 +293,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 			&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
 			&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
 			&l.RequestDetails, &l.RequestType,
+			&l.CreatedBy, &l.AssignedTo,
 			&l.CreatedAt, &l.UpdatedAt,
 		)
 		if err != nil {
@@ -300,7 +308,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, page, limit int, search,
 }
 
 func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.Lead, error) {
-	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_at, updated_at 
+	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_by, assigned_to, created_at, updated_at 
 			  FROM leads 
 			  WHERE lead_id = $1 AND deleted_at IS NULL`
 	row := r.pgx.QueryRow(ctx, query, leadID)
@@ -315,6 +323,7 @@ func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.L
 		&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
 		&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
 		&l.RequestDetails, &l.RequestType,
+		&l.CreatedBy, &l.AssignedTo,
 		&l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
@@ -361,12 +370,19 @@ func (r *leadRepository) GetHeatMapAggregation(ctx context.Context) ([]models.Le
 	return result, nil
 }
 
-func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error) {
+func (r *leadRepository) FindActivitiesFeed(ctx context.Context, scope helpers.DataScope, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error) {
 	var whereClauses []string
 	var args []interface{}
 	argCount := 1
 
 	whereClauses = append(whereClauses, "l.deleted_at IS NULL")
+
+	if !scope.IsUnrestricted {
+		placeholder := fmt.Sprintf("$%d", argCount)
+		whereClauses = append(whereClauses, fmt.Sprintf("(l.assigned_to = ANY(%s) OR l.created_by = ANY(%s))", placeholder, placeholder))
+		args = append(args, scope.AllowedUserIDs)
+		argCount++
+	}
 
 	repFilter := q.Rep
 	if repFilter == "" {
@@ -580,7 +596,7 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, q models.GetAct
 
 func (r *leadRepository) FindLeadByCompanyOrContact(ctx context.Context, name string) (*models.Lead, error) {
 	nameTrimmed := strings.TrimSpace(name)
-	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_at, updated_at 
+	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_by, assigned_to, created_at, updated_at 
 			  FROM leads 
 			  WHERE (LOWER(company) = LOWER($1) OR LOWER(contact) = LOWER($1)) AND deleted_at IS NULL
 			  ORDER BY created_at DESC LIMIT 1`
@@ -596,6 +612,7 @@ func (r *leadRepository) FindLeadByCompanyOrContact(ctx context.Context, name st
 		&l.AlternatePhone, &l.AlternatePhoneCountry, &l.LinkedinProfileURL, &l.LinkedinCompanyPageURL,
 		&l.EstimatedRequirementDate, &l.LastContactDate, &l.NextFollowUp, &l.BasicRequirements, &l.Notes,
 		&l.RequestDetails, &l.RequestType,
+		&l.CreatedBy, &l.AssignedTo,
 		&l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
@@ -607,8 +624,15 @@ func (r *leadRepository) FindLeadByCompanyOrContact(ctx context.Context, name st
 	return &l, nil
 }
 
-func (r *leadRepository) GetActivitiesSummary(ctx context.Context) (*models.ActivitySummaryData, error) {
-	query := `SELECT 
+func (r *leadRepository) GetActivitiesSummary(ctx context.Context, scope helpers.DataScope) (*models.ActivitySummaryData, error) {
+	whereClause := "WHERE l.deleted_at IS NULL"
+	var args []any
+	if !scope.IsUnrestricted {
+		whereClause += " AND (l.assigned_to = ANY($1) OR l.created_by = ANY($1))"
+		args = append(args, scope.AllowedUserIDs)
+	}
+
+	query := fmt.Sprintf(`SELECT 
 		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE), 0) AS velocity_today_logged,
 		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = TRUE), 0) AS velocity_today_completed,
 		COALESCE(COUNT(*) FILTER (WHERE a.created_at::date = CURRENT_DATE AND a.completed = FALSE), 0) AS velocity_today_planned,
@@ -616,10 +640,10 @@ func (r *leadRepository) GetActivitiesSummary(ctx context.Context) (*models.Acti
 		COALESCE(COUNT(*) FILTER (WHERE a.due_date >= CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE), 0) AS upcoming_count
 	FROM activities a
 	INNER JOIN leads l ON a.lead_id = l.lead_id
-	WHERE l.deleted_at IS NULL`
+	%s`, whereClause)
 
 	var s models.ActivitySummaryData
-	err := r.pgx.QueryRow(ctx, query).Scan(
+	err := r.pgx.QueryRow(ctx, query, args...).Scan(
 		&s.VelocityTodayLogged,
 		&s.VelocityTodayCompleted,
 		&s.VelocityTodayPlanned,

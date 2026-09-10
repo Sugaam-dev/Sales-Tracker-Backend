@@ -170,7 +170,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 
 	t.Run("API-17: GET /api/v1/activities - Feed, Filters, Pagination, and Type Counts", func(t *testing.T) {
 		// 1. Fetch all activities for the test user
-		feedResp, err := leadService.GetActivities(ctx, models.GetActivitiesQuery{
+		feedResp, err := leadService.GetActivities(ctx, testUser.ID, testUser.Role, models.GetActivitiesQuery{
 			UserID: testUser.ID.String(),
 			Page:   1,
 			Limit:  20,
@@ -186,7 +186,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		}
 
 		// 2. Fetch with type=Call filter: data should only contain Calls, but type_counts should reflect all types
-		callFeedResp, err := leadService.GetActivities(ctx, models.GetActivitiesQuery{
+		callFeedResp, err := leadService.GetActivities(ctx, testUser.ID, testUser.Role, models.GetActivitiesQuery{
 			UserID: testUser.ID.String(),
 			Type:   "Call",
 			Page:   1,
@@ -209,7 +209,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		}
 
 		// 3. Multi-filter AND semantics
-		multiResp, err := leadService.GetActivities(ctx, models.GetActivitiesQuery{
+		multiResp, err := leadService.GetActivities(ctx, testUser.ID, testUser.Role, models.GetActivitiesQuery{
 			LeadID:    testLead.LeadID,
 			Geography: "Asia",
 			Industry:  "Technology",
@@ -225,7 +225,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		}
 
 		// 4. Pagination
-		paginatedResp, err := leadService.GetActivities(ctx, models.GetActivitiesQuery{
+		paginatedResp, err := leadService.GetActivities(ctx, testUser.ID, testUser.Role, models.GetActivitiesQuery{
 			LeadID: testLead.LeadID,
 			Page:   1,
 			Limit:  1,
@@ -266,7 +266,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		}
 		_ = gormDB.Create(&upcomingAct).Error
 
-		summary, err := leadService.GetActivitiesSummary(ctx)
+		summary, err := leadService.GetActivitiesSummary(ctx, testUser.ID, testUser.Role)
 		if err != nil {
 			t.Fatalf("GetActivitiesSummary failed: %v", err)
 		}

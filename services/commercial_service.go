@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crm-auth-service/helpers"
+	"crm-auth-service/middleware"
 	"crm-auth-service/models"
 	"crm-auth-service/repository"
 )
@@ -37,22 +38,26 @@ func NewCommercialService(
 	}
 }
 
-func (s *commercialService) checkLeadAccess(leadContext *models.LeadContextDTO, userRole, userEmail string) error {
-	if userRole == models.RoleAdmin || userRole == models.RoleSalesManager || userRole == models.RoleLeader {
-		return nil
+func (s *commercialService) checkLeadAccess(ctx context.Context, leadID string, userRole, userEmail string) error {
+	lead, err := s.leadRepo.FindByID(ctx, leadID)
+	if err != nil {
+		if errors.Is(err, helpers.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
 	}
 
-	userName, err := s.leadRepo.GetUserNameByEmail(userEmail)
+	user, err := s.userRepo.FindByEmail(ctx, userEmail)
 	if err != nil {
 		return ErrUnauthorized
 	}
 
-	leadOwner := ""
-	if leadContext.Owner != nil {
-		leadOwner = *leadContext.Owner
+	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, user.ID, userRole)
+	if err != nil {
+		return ErrUnauthorized
 	}
 
-	if leadOwner != userName {
+	if !scope.CanAccessLead(lead) {
 		return ErrUnauthorized
 	}
 
@@ -173,7 +178,7 @@ func (s *commercialService) GetCommercial(ctx context.Context, leadID string, us
 		return nil, err
 	}
 
-	if err := s.checkLeadAccess(leadContext, userRole, userEmail); err != nil {
+	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +218,7 @@ func (s *commercialService) UpdateCommercial(
 		return nil, err
 	}
 
-	if err := s.checkLeadAccess(leadContext, userRole, userEmail); err != nil {
+	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
 		return nil, err
 	}
 
@@ -380,7 +385,7 @@ func (s *commercialService) UpdateCommercial(
 }
 
 func (s *commercialService) GetAnalytics(ctx context.Context, leadID string, userRole, userEmail string, currencyParam string) (*models.CommercialAnalyticsResponse, error) {
-	leadContext, err := s.commRepo.GetLeadContext(ctx, leadID)
+	_, err := s.commRepo.GetLeadContext(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, helpers.ErrNotFound) {
 			return nil, ErrNotFound
@@ -388,7 +393,7 @@ func (s *commercialService) GetAnalytics(ctx context.Context, leadID string, use
 		return nil, err
 	}
 
-	if err := s.checkLeadAccess(leadContext, userRole, userEmail); err != nil {
+	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
 		return nil, err
 	}
 
