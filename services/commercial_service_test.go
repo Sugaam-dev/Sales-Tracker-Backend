@@ -140,88 +140,215 @@ func TestCurrencyConversionAndPrecision(t *testing.T) {
 }
 
 func TestFinancialCalculationEngine(t *testing.T) {
-	resources := []models.CommercialResource{
-		{
-			Role:         "Tech Lead",
-			Grade:        "L3",
-			OnsiteDays:   20,
-			OffshoreDays: 100,
-			DailyCost:    450.00,
-			BillingRate:  800.00,
-		},
-		{
-			Role:         "Senior Dev",
-			Grade:        "L2",
-			OnsiteDays:   0,
-			OffshoreDays: 100,
-			DailyCost:    300.00,
-			BillingRate:  600.00,
-		},
-	}
+	t.Run("TEST 1 — BASIC CALCULATION", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Developer",
+				Grade:        "L1",
+				OnsiteDays:   5,
+				OffshoreDays: 5,
+				DailyCost:    60.00,
+				BillingRate:  100.00,
+			},
+		}
+		expenses := []models.CommercialExpense{
+			{ExpenseType: "Travel", Cost: 500.00},
+		}
 
-	expenses := []models.CommercialExpense{
-		{
-			ExpenseType: "Travel",
-			Cost:        5000.00,
-		},
-		{
-			ExpenseType: "Cloud Hosting",
-			Cost:        3000.00,
-		},
-	}
+		summary := CalculateFinancialSummary(resources, expenses, 0.0, 0.0, nil, 1)
 
-	// Resource 1: (20 + 100) * 450 = 54,000 cost; (20 + 100) * 800 = 96,000 revenue
-	// Resource 2: 100 * 300 = 30,000 cost; 100 * 600 = 60,000 revenue
-	// Total Resource Cost = 84,000
-	// Total Expenses = 8,000
-	// Total Project Cost = 92,000
-	// Markup = 20%, Discount = 5%
-	// Calculated Selling Price = 92,000 * 1.20 * 0.95 = 104,880.00
-	// Gross Profit = 104,880 - 92,000 = 12,880.00
-	// Margin % = (12,880 / 104,880) * 100 = 12.28%
-	// ROI % = (12,880 / 92,000) * 100 = 14.00%
-	summary := CalculateFinancialSummary(resources, expenses, 20.0, 5.0, nil, 6)
+		if summary.TotalResourceRevenue != 1000.00 {
+			t.Errorf("Expected TotalResourceRevenue 1000.00, got %f", summary.TotalResourceRevenue)
+		}
+		if summary.TotalExpenses != 500.00 {
+			t.Errorf("Expected TotalExpenses 500.00, got %f", summary.TotalExpenses)
+		}
+		if summary.CalculatedSellingPrice != 1500.00 {
+			t.Errorf("Expected CalculatedSellingPrice 1500.00, got %f", summary.CalculatedSellingPrice)
+		}
+		if summary.TotalResourceCost != 600.00 {
+			t.Errorf("Expected TotalResourceCost 600.00, got %f", summary.TotalResourceCost)
+		}
+		if summary.TotalProjectCost != 1100.00 {
+			t.Errorf("Expected TotalProjectCost 1100.00, got %f", summary.TotalProjectCost)
+		}
+		if summary.GrossProfit != 400.00 {
+			t.Errorf("Expected GrossProfit 400.00, got %f", summary.GrossProfit)
+		}
+		if summary.MarginPercent != 26.67 {
+			t.Errorf("Expected MarginPercent 26.67%%, got %f", summary.MarginPercent)
+		}
+	})
 
-	if summary.TotalResourceCost != 84000.00 {
-		t.Errorf("Expected resource cost 84000.00, got %f", summary.TotalResourceCost)
-	}
-	if summary.TotalExpenses != 8000.00 {
-		t.Errorf("Expected total expenses 8000.00, got %f", summary.TotalExpenses)
-	}
-	if summary.TotalProjectCost != 92000.00 {
-		t.Errorf("Expected project cost 92000.00, got %f", summary.TotalProjectCost)
-	}
-	if summary.CalculatedSellingPrice != 104880.00 {
-		t.Errorf("Expected calculated selling price 104880.00, got %f", summary.CalculatedSellingPrice)
-	}
-	if summary.EffectiveSellingPrice != 104880.00 {
-		t.Errorf("Expected effective selling price 104880.00, got %f", summary.EffectiveSellingPrice)
-	}
-	if summary.GrossProfit != 12880.00 {
-		t.Errorf("Expected gross profit 12880.00, got %f", summary.GrossProfit)
-	}
-	if summary.MarginPercent != 12.28 {
-		t.Errorf("Expected margin percent 12.28%%, got %f", summary.MarginPercent)
-	}
-	if summary.ROIPercent != 14.00 {
-		t.Errorf("Expected ROI percent 14.00%%, got %f", summary.ROIPercent)
-	}
+	t.Run("TEST 2 — MARKUP", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Lead",
+				Grade:        "L3",
+				OnsiteDays:   100,
+				OffshoreDays: 0,
+				DailyCost:    500.00,
+				BillingRate:  1000.00, // Total Revenue = 100,000
+			},
+		}
+		expenses := []models.CommercialExpense{
+			{ExpenseType: "License", Cost: 10000.00},
+		}
 
-	// Test Manual Selling Price Override
-	manualPrice := 120000.00
-	summaryWithManual := CalculateFinancialSummary(resources, expenses, 20.0, 5.0, &manualPrice, 6)
-	if summaryWithManual.EffectiveSellingPrice != 120000.00 {
-		t.Errorf("Expected manual selling price override 120000.00, got %f", summaryWithManual.EffectiveSellingPrice)
-	}
-	if summaryWithManual.GrossProfit != 28000.00 {
-		t.Errorf("Expected gross profit 28000.00, got %f", summaryWithManual.GrossProfit)
-	}
+		summary := CalculateFinancialSummary(resources, expenses, 20.0, 0.0, nil, 1)
 
-	// Zero-division safety test
-	zeroSummary := CalculateFinancialSummary(nil, nil, 0, 0, nil, 1)
-	if zeroSummary.MarginPercent != 0.0 || zeroSummary.ROIPercent != 0.0 {
-		t.Errorf("Expected 0%% margin and ROI for zero inputs, got margin=%f, roi=%f", zeroSummary.MarginPercent, zeroSummary.ROIPercent)
-	}
+		// Final Resource Revenue = 100,000 * (1 + 0.20) = 120,000
+		// Final Selling Price = 120,000 + 10,000 = 130,000
+		if summary.CalculatedSellingPrice != 130000.00 {
+			t.Errorf("Expected CalculatedSellingPrice 130000.00, got %f", summary.CalculatedSellingPrice)
+		}
+		if summary.TotalExpenses != 10000.00 {
+			t.Errorf("Expected Expenses 10000.00 unchanged by markup, got %f", summary.TotalExpenses)
+		}
+	})
+
+	t.Run("TEST 3 — DISCOUNT", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Lead",
+				Grade:        "L3",
+				OnsiteDays:   100,
+				OffshoreDays: 0,
+				DailyCost:    500.00,
+				BillingRate:  1000.00, // Total Revenue = 100,000
+			},
+		}
+		expenses := []models.CommercialExpense{
+			{ExpenseType: "License", Cost: 10000.00},
+		}
+
+		summary := CalculateFinancialSummary(resources, expenses, 0.0, 10.0, nil, 1)
+
+		// Final Resource Revenue = 100,000 * (1 - 0.10) = 90,000
+		// Final Selling Price = 90,000 + 10,000 = 100,000
+		if summary.CalculatedSellingPrice != 100000.00 {
+			t.Errorf("Expected CalculatedSellingPrice 100000.00, got %f", summary.CalculatedSellingPrice)
+		}
+		if summary.TotalExpenses != 10000.00 {
+			t.Errorf("Expected Expenses 10000.00 unchanged by discount, got %f", summary.TotalExpenses)
+		}
+	})
+
+	t.Run("TEST 4 — MARKUP + DISCOUNT", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Lead",
+				Grade:        "L3",
+				OnsiteDays:   100,
+				OffshoreDays: 0,
+				DailyCost:    500.00,
+				BillingRate:  1000.00, // Total Revenue = 100,000
+			},
+		}
+		expenses := []models.CommercialExpense{
+			{ExpenseType: "License", Cost: 10000.00},
+		}
+
+		summary := CalculateFinancialSummary(resources, expenses, 20.0, 5.0, nil, 1)
+
+		// Final Resource Revenue = 100,000 * (1 + 0.20 - 0.05) = 115,000
+		// Final Selling Price = 115,000 + 10,000 = 125,000
+		if summary.CalculatedSellingPrice != 125000.00 {
+			t.Errorf("Expected CalculatedSellingPrice 125000.00, got %f", summary.CalculatedSellingPrice)
+		}
+	})
+
+	t.Run("TEST 5 — MULTIPLE RESOURCES", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Dev 1",
+				Grade:        "L1",
+				OnsiteDays:   10,
+				OffshoreDays: 0,
+				DailyCost:    300.00,
+				BillingRate:  500.00,
+			},
+			{
+				Role:         "Dev 2",
+				Grade:        "L2",
+				OnsiteDays:   5,
+				OffshoreDays: 0,
+				DailyCost:    400.00,
+				BillingRate:  800.00,
+			},
+		}
+
+		summary := CalculateFinancialSummary(resources, nil, 0.0, 0.0, nil, 1)
+
+		// Resource Revenue = (500 * 10) + (800 * 5) = 5000 + 4000 = 9000
+		// Resource Cost = (300 * 10) + (400 * 5) = 3000 + 2000 = 5000
+		if summary.TotalResourceRevenue != 9000.00 {
+			t.Errorf("Expected TotalResourceRevenue 9000.00, got %f", summary.TotalResourceRevenue)
+		}
+		if summary.TotalResourceCost != 5000.00 {
+			t.Errorf("Expected TotalResourceCost 5000.00, got %f", summary.TotalResourceCost)
+		}
+	})
+
+	t.Run("TEST 6 — EXPENSE PASS-THROUGH", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Dev",
+				Grade:        "L1",
+				OnsiteDays:   10,
+				OffshoreDays: 0,
+				DailyCost:    100.00,
+				BillingRate:  200.00, // Revenue = 2000
+			},
+		}
+		expenses := []models.CommercialExpense{
+			{ExpenseType: "Airfare", Cost: 1000.00},
+		}
+
+		summary := CalculateFinancialSummary(resources, expenses, 50.0, 10.0, nil, 1)
+
+		// Resource Revenue = 2000 * (1 + 0.50 - 0.10) = 2800
+		// Final Selling Price = 2800 + 1000 = 3800
+		if summary.CalculatedSellingPrice != 3800.00 {
+			t.Errorf("Expected Selling Price 3800.00, got %f", summary.CalculatedSellingPrice)
+		}
+		if summary.TotalExpenses != 1000.00 {
+			t.Errorf("Expected Expenses 1000.00, got %f", summary.TotalExpenses)
+		}
+	})
+
+	t.Run("TEST 7 — ZERO SELLING PRICE", func(t *testing.T) {
+		zeroSummary := CalculateFinancialSummary(nil, nil, 0, 0, nil, 1)
+		if zeroSummary.MarginPercent != 0.0 || zeroSummary.ROIPercent != 0.0 {
+			t.Errorf("Expected 0%% margin and ROI for zero inputs, got margin=%f, roi=%f", zeroSummary.MarginPercent, zeroSummary.ROIPercent)
+		}
+	})
+
+	t.Run("TEST 8 — MANUAL SELLING PRICE OVERRIDE", func(t *testing.T) {
+		resources := []models.CommercialResource{
+			{
+				Role:         "Dev",
+				Grade:        "L1",
+				OnsiteDays:   10,
+				OffshoreDays: 0,
+				DailyCost:    100.00,
+				BillingRate:  200.00, // Revenue = 2000
+			},
+		}
+		manualPrice := 5000.00
+
+		summary := CalculateFinancialSummary(resources, nil, 0.0, 0.0, &manualPrice, 1)
+
+		if summary.CalculatedSellingPrice != 2000.00 {
+			t.Errorf("Expected CalculatedSellingPrice 2000.00, got %f", summary.CalculatedSellingPrice)
+		}
+		if summary.EffectiveSellingPrice != 5000.00 {
+			t.Errorf("Expected EffectiveSellingPrice 5000.00, got %f", summary.EffectiveSellingPrice)
+		}
+		if summary.GrossProfit != 4000.00 { // 5000 - 1000 cost
+			t.Errorf("Expected GrossProfit 4000.00, got %f", summary.GrossProfit)
+		}
+	})
 }
 
 func TestCommercialIntegrationLifecycle(t *testing.T) {
@@ -489,12 +616,14 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 
 		// Expected calculations:
 		// Resource Cost: 22800 + 23400 + 14300 + 17100 = 77,600
+		// Resource Revenue: 39000 + 39000 + 24700 + 26100 = 128,800
 		// Total Expenses: 6500 + 8000 + 2400 + 1800 + 1500 + 1200 = 21,400
 		// Total Project Cost: 77,600 + 21,400 = 99,000
-		// Calculated Selling Price: 99,000 * 1.20 * 0.95 = 112,860
-		// Gross Profit: 112,860 - 99,000 = 13,860
-		// Margin %: (13,860 / 112,860) * 100 = 12.28%
-		// ROI %: (13,860 / 99,000) * 100 = 14.00%
+		// Final Resource Revenue: 128,800 * (1 + 0.20 - 0.05) = 148,120
+		// Calculated Selling Price: 148,120 + 21,400 = 169,520
+		// Gross Profit: 169,520 - 99,000 = 70,520
+		// Margin %: (70,520 / 169,520) * 100 = 41.60%
+		// ROI %: (70,520 / 99,000) * 100 = 71.23%
 		if resp.CommercialEstimation.FinancialSummary.TotalResourceCost != 77600.00 {
 			t.Errorf("Expected TotalResourceCost 77600, got %f", resp.CommercialEstimation.FinancialSummary.TotalResourceCost)
 		}
@@ -504,17 +633,17 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 		if resp.CommercialEstimation.FinancialSummary.TotalProjectCost != 99000.00 {
 			t.Errorf("Expected TotalProjectCost 99000, got %f", resp.CommercialEstimation.FinancialSummary.TotalProjectCost)
 		}
-		if resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice != 112860.00 {
-			t.Errorf("Expected CalculatedSellingPrice 112860, got %f", resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice)
+		if resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice != 169520.00 {
+			t.Errorf("Expected CalculatedSellingPrice 169520, got %f", resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice)
 		}
-		if resp.CommercialEstimation.FinancialSummary.GrossProfit != 13860.00 {
-			t.Errorf("Expected GrossProfit 13860, got %f", resp.CommercialEstimation.FinancialSummary.GrossProfit)
+		if resp.CommercialEstimation.FinancialSummary.GrossProfit != 70520.00 {
+			t.Errorf("Expected GrossProfit 70520, got %f", resp.CommercialEstimation.FinancialSummary.GrossProfit)
 		}
-		if resp.CommercialEstimation.FinancialSummary.MarginPercent != 12.28 {
-			t.Errorf("Expected MarginPercent 12.28, got %f", resp.CommercialEstimation.FinancialSummary.MarginPercent)
+		if resp.CommercialEstimation.FinancialSummary.MarginPercent != 41.60 {
+			t.Errorf("Expected MarginPercent 41.60, got %f", resp.CommercialEstimation.FinancialSummary.MarginPercent)
 		}
-		if resp.CommercialEstimation.FinancialSummary.ROIPercent != 14.00 {
-			t.Errorf("Expected ROIPercent 14.00, got %f", resp.CommercialEstimation.FinancialSummary.ROIPercent)
+		if resp.CommercialEstimation.FinancialSummary.ROIPercent != 71.23 {
+			t.Errorf("Expected ROIPercent 71.23, got %f", resp.CommercialEstimation.FinancialSummary.ROIPercent)
 		}
 	})
 

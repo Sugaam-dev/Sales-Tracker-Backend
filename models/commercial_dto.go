@@ -43,6 +43,7 @@ type SDLCAllocationDTO struct {
 // FinancialSummaryDTO holds computed financial overview metrics.
 type FinancialSummaryDTO struct {
 	TotalResourceCost      float64  `json:"totalResourceCost"`
+	TotalResourceRevenue   float64  `json:"totalResourceRevenue,omitempty"`
 	TotalExpenses          float64  `json:"totalExpenses"`
 	TotalProjectCost       float64  `json:"totalProjectCost"`
 	CalculatedSellingPrice float64  `json:"calculatedSellingPrice"`

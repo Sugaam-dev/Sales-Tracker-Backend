@@ -937,6 +937,7 @@ func (s *AuthService) ListUsers(ctx context.Context) ([]*models.UserSummary, err
 			EmailVerified:  u.EmailVerified,
 			MobileVerified: u.MobileVerified,
 			ManagerID:      u.ManagerID,
+			IsActive:       u.IsActive,
 			Permissions:    make([]string, 0),
 		}
 
@@ -994,6 +995,7 @@ func (s *AuthService) UpdateUser(ctx context.Context, id uuid.UUID, name, email,
 		EmailVerified:  updated.EmailVerified,
 		MobileVerified: updated.MobileVerified,
 		ManagerID:      updated.ManagerID,
+		IsActive:       updated.IsActive,
 		Permissions:    make([]string, 0),
 	}
 
