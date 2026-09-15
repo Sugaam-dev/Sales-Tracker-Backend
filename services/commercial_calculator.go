@@ -139,9 +139,11 @@ func CalculateFinancialSummary(
 	durationMonths int,
 ) models.FinancialSummaryDTO {
 	var totalResourceCost float64
+	var totalResourceRevenue float64
 	for _, r := range resources {
 		days := float64(r.OnsiteDays + r.OffshoreDays)
 		totalResourceCost += days * r.DailyCost
+		totalResourceRevenue += days * r.BillingRate
 	}
 
 	var totalExpenses float64
@@ -149,10 +151,18 @@ func CalculateFinancialSummary(
 		totalExpenses += e.Cost
 	}
 
+	totalResourceCost = Round2(totalResourceCost)
+	totalResourceRevenue = Round2(totalResourceRevenue)
+	totalExpenses = Round2(totalExpenses)
+
 	totalProjectCost := Round2(totalResourceCost + totalExpenses)
 
-	// Calculated Selling Price = C * (1 + Markup/100) * (1 - Discount/100)
-	calcSellingPrice := Round2(totalProjectCost * (1.0 + markupPercent/100.0) * (1.0 - discountPercent/100.0))
+	// Final Resource Revenue = Total Resource Revenue * (1 + (Markup%/100) - (Discount%/100))
+	multiplier := 1.0 + (markupPercent / 100.0) - (discountPercent / 100.0)
+	finalResourceRevenue := Round2(totalResourceRevenue * multiplier)
+
+	// Final Calculated Selling Price = Final Resource Revenue + Total Expenses
+	calcSellingPrice := Round2(finalResourceRevenue + totalExpenses)
 
 	// Effective Selling Price
 	effectiveSellingPrice := calcSellingPrice
@@ -223,8 +233,9 @@ func CalculateFinancialSummary(
 	npvRounded := Round2(npv)
 
 	return models.FinancialSummaryDTO{
-		TotalResourceCost:      Round2(totalResourceCost),
-		TotalExpenses:          Round2(totalExpenses),
+		TotalResourceCost:      totalResourceCost,
+		TotalResourceRevenue:   totalResourceRevenue,
+		TotalExpenses:          totalExpenses,
 		TotalProjectCost:       totalProjectCost,
 		CalculatedSellingPrice: calcSellingPrice,
 		EffectiveSellingPrice:  effectiveSellingPrice,
@@ -241,6 +252,7 @@ func CalculateFinancialSummary(
 func ConvertFinancialSummary(summary models.FinancialSummaryDTO, targetCurrency string) models.FinancialSummaryDTO {
 	converted := summary
 	converted.TotalResourceCost = Convert(summary.TotalResourceCost, targetCurrency)
+	converted.TotalResourceRevenue = Convert(summary.TotalResourceRevenue, targetCurrency)
 	converted.TotalExpenses = Convert(summary.TotalExpenses, targetCurrency)
 	converted.TotalProjectCost = Convert(summary.TotalProjectCost, targetCurrency)
 	converted.CalculatedSellingPrice = Convert(summary.CalculatedSellingPrice, targetCurrency)

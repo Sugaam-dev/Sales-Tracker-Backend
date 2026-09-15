@@ -240,3 +240,165 @@ func TestBuildSSORedirectURL(t *testing.T) {
 		t.Errorf("expected URL to contain 'prompt=select_account', got: %s", urlStr)
 	}
 }
+
+type mockUserRepoForStatus struct {
+	mockUserRepo
+	users map[uuid.UUID]*models.User
+}
+
+func (m *mockUserRepoForStatus) FindAllUsers(ctx context.Context) ([]*models.User, error) {
+	var result []*models.User
+	for _, u := range m.users {
+		result = append(result, u)
+	}
+	return result, nil
+}
+
+func (m *mockUserRepoForStatus) FindByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
+	u, ok := m.users[id]
+	if !ok {
+		return nil, helpers.ErrNotFound
+	}
+	return u, nil
+}
+
+func (m *mockUserRepoForStatus) UpdateUserDetails(ctx context.Context, id uuid.UUID, name, email, role string, isActive bool, managerID *uuid.UUID) error {
+	u, ok := m.users[id]
+	if !ok {
+		return helpers.ErrNotFound
+	}
+	u.Name = name
+	u.Email = email
+	u.Role = role
+	u.IsActive = isActive
+	u.ManagerID = managerID
+	return nil
+}
+
+func TestUserStatus_ListUsers_ReturnsCorrectStatus(t *testing.T) {
+	userActiveID := uuid.New()
+	userInactiveID := uuid.New()
+
+	repo := &mockUserRepoForStatus{
+		users: map[uuid.UUID]*models.User{
+			userActiveID: {
+				ID:       userActiveID,
+				Name:     "Active User",
+				Email:    "active@example.com",
+				Role:     "sales_manager",
+				IsActive: true,
+			},
+			userInactiveID: {
+				ID:       userInactiveID,
+				Name:     "Inactive User",
+				Email:    "inactive@example.com",
+				Role:     "sales_executive",
+				IsActive: false,
+			},
+		},
+	}
+
+	service := NewAuthService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, slog.Default())
+
+	// TEST 1 & TEST 2: ListUsers returns true for active user and false for inactive user
+	summaries, err := service.ListUsers(context.Background())
+	if err != nil {
+		t.Fatalf("ListUsers failed: %v", err)
+	}
+
+	if len(summaries) != 2 {
+		t.Fatalf("expected 2 user summaries, got %d", len(summaries))
+	}
+
+	foundActive := false
+	foundInactive := false
+
+	for _, s := range summaries {
+		if s.ID == userActiveID {
+			foundActive = true
+			if !s.IsActive {
+				t.Errorf("TEST 1 FAILED: expected is_active=true for active user, got false")
+			}
+		}
+		if s.ID == userInactiveID {
+			foundInactive = true
+			if s.IsActive {
+				t.Errorf("TEST 2 FAILED: expected is_active=false for inactive user, got true")
+			}
+		}
+	}
+
+	if !foundActive || !foundInactive {
+		t.Errorf("failed to find all test users in ListUsers summary")
+	}
+}
+
+func TestUserStatus_UpdateUser_PersistsAndReturnsCorrectStatus(t *testing.T) {
+	userID := uuid.New()
+	managerID := uuid.New()
+
+	repo := &mockUserRepoForStatus{
+		users: map[uuid.UUID]*models.User{
+			managerID: {
+				ID:       managerID,
+				Name:     "Manager User",
+				Email:    "manager@example.com",
+				Role:     "sales_manager",
+				IsActive: true,
+			},
+			userID: {
+				ID:       userID,
+				Name:     "Initial User",
+				Email:    "initial@example.com",
+				Role:     "sales_executive",
+				IsActive: true,
+			},
+		},
+	}
+
+	service := NewAuthService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, slog.Default())
+
+	// TEST 4 & TEST 5: Update user to is_active = false
+	respInactive, err := service.UpdateUser(context.Background(), userID, "Updated User", "updated@example.com", "sales_executive", false, &managerID)
+	if err != nil {
+		t.Fatalf("UpdateUser failed: %v", err)
+	}
+
+	// TEST 5: Verify UpdateUser response contains is_active = false
+	if respInactive.IsActive != false {
+		t.Errorf("TEST 5 FAILED: expected UpdateUser response IsActive=false, got %v", respInactive.IsActive)
+	}
+
+	// TEST 4: Fetch user via ListUsers and verify is_active = false
+	summaries, _ := service.ListUsers(context.Background())
+	for _, s := range summaries {
+		if s.ID == userID && s.IsActive != false {
+			t.Errorf("TEST 4 FAILED: expected ListUsers to return IsActive=false after update, got true")
+		}
+	}
+
+	// TEST 3 & TEST 6: Update user to is_active = true, and verify name/email/role/manager_id
+	respActive, err := service.UpdateUser(context.Background(), userID, "Final Name", "final@example.com", "sales_executive", true, &managerID)
+	if err != nil {
+		t.Fatalf("UpdateUser failed: %v", err)
+	}
+
+	// TEST 5: Verify UpdateUser response contains is_active = true
+	if respActive.IsActive != true {
+		t.Errorf("TEST 5 FAILED: expected UpdateUser response IsActive=true, got %v", respActive.IsActive)
+	}
+
+	// TEST 6: Verify name/email/role/manager_id updated correctly
+	if respActive.Name != "Final Name" || respActive.Email != "final@example.com" || respActive.Role != "sales_executive" || respActive.ManagerID == nil || *respActive.ManagerID != managerID {
+		t.Errorf("TEST 6 FAILED: user profile fields were not preserved/updated properly: %+v", respActive)
+	}
+
+	// TEST 3: Fetch user via ListUsers and verify is_active = true
+	summariesActive, _ := service.ListUsers(context.Background())
+	for _, s := range summariesActive {
+		if s.ID == userID && s.IsActive != true {
+			t.Errorf("TEST 3 FAILED: expected ListUsers to return IsActive=true after update, got false")
+		}
+	}
+}
+
