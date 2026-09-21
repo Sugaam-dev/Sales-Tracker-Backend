@@ -45,6 +45,8 @@ type UserRepository interface {
 	GetManagedExecutives(ctx context.Context, managerID uuid.UUID) ([]*models.User, error)
 	// GetLeaderPermissions returns the list of active delegated permission strings for a leader.
 	GetLeaderPermissions(ctx context.Context, leaderID uuid.UUID) ([]string, error)
+	// GetAllLeaderPermissions returns a map of user_id -> slice of permissions for all leader delegations.
+	GetAllLeaderPermissions(ctx context.Context) (map[uuid.UUID][]string, error)
 	// GrantLeaderPermission adds a delegated permission for a leader.
 	GrantLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string, grantedBy *uuid.UUID) error
 	// RevokeLeaderPermission removes a delegated permission from a leader.
@@ -53,6 +55,8 @@ type UserRepository interface {
 	AssignExecutiveToManager(ctx context.Context, executiveID uuid.UUID, managerID *uuid.UUID) error
 	// FindUsersScoped returns users matching the caller's data scope for dropdowns/filtering.
 	FindUsersScoped(ctx context.Context, scope helpers.DataScope) ([]*models.User, error)
+	// FindUsersByRoleScope returns active users matching the caller's role scope in a single query.
+	FindUsersByRoleScope(ctx context.Context, callerID uuid.UUID, callerRole string) ([]*models.User, error)
 	// UpdateUserDetails updates user administrative profile (name, email, role, is_active, manager_id).
 	UpdateUserDetails(ctx context.Context, id uuid.UUID, name, email, role string, isActive bool, managerID *uuid.UUID) error
 	// DeleteUser deactivates or removes a user by ID.
@@ -293,6 +297,27 @@ func (r *userRepository) GetLeaderPermissions(ctx context.Context, leaderID uuid
 	return perms, rows.Err()
 }
 
+// GetAllLeaderPermissions returns a map of user_id -> slice of permissions for all leader delegations in one query.
+func (r *userRepository) GetAllLeaderPermissions(ctx context.Context) (map[uuid.UUID][]string, error) {
+	query := "SELECT user_id, permission FROM leader_delegations"
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[uuid.UUID][]string)
+	for rows.Next() {
+		var uid uuid.UUID
+		var perm string
+		if err := rows.Scan(&uid, &perm); err != nil {
+			return nil, err
+		}
+		result[uid] = append(result[uid], perm)
+	}
+	return result, rows.Err()
+}
+
 // GrantLeaderPermission adds a delegated permission for a leader.
 func (r *userRepository) GrantLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string, grantedBy *uuid.UUID) error {
 	query := `INSERT INTO leader_delegations (user_id, permission, granted_by, created_at)
@@ -328,6 +353,42 @@ func (r *userRepository) FindUsersScoped(ctx context.Context, scope helpers.Data
 
 	query := "SELECT " + selectUserFields + " FROM users WHERE id = ANY($1) AND is_active = TRUE ORDER BY name ASC"
 	rows, err := r.db.Query(ctx, query, scope.AllowedUserIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*models.User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+// FindUsersByRoleScope returns active users matching caller's role scope in a single query.
+func (r *userRepository) FindUsersByRoleScope(ctx context.Context, callerID uuid.UUID, callerRole string) ([]*models.User, error) {
+	var query string
+	var args []interface{}
+
+	switch callerRole {
+	case models.RoleAdmin, models.RoleLeader:
+		query = "SELECT " + selectUserFields + " FROM users WHERE is_active = TRUE ORDER BY name ASC"
+	case models.RoleSalesManager:
+		query = "SELECT " + selectUserFields + " FROM users WHERE (id = $1 OR (manager_id = $1 AND role = $2)) AND is_active = TRUE ORDER BY name ASC"
+		args = []interface{}{callerID, models.RoleSalesExecutive}
+	case models.RoleSalesExecutive:
+		query = "SELECT " + selectUserFields + " FROM users WHERE id = $1 AND is_active = TRUE ORDER BY name ASC"
+		args = []interface{}{callerID}
+	default:
+		query = "SELECT " + selectUserFields + " FROM users WHERE id = $1 AND is_active = TRUE ORDER BY name ASC"
+		args = []interface{}{callerID}
+	}
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

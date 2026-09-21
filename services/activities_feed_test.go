@@ -41,7 +41,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(pool)
 	leadRepo := repository.NewLeadRepository(pool, gormDB)
-	leadService := NewLeadService(leadRepo, userRepo)
+	leadService := NewLeadService(leadRepo, userRepo, nil, nil)
 
 	// Seed test user
 	testUserUUID := uuid.New()
@@ -63,7 +63,8 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		Contact:                  strPtr("Test Contact"),
 		Email:                    strPtr(fmt.Sprintf("act_lead_%d@example.com", p)),
 		Phone:                    strPtr("9876543210"),
-		Owner:                    strPtr("KAM One"),
+		Owner:                    strPtr(testUser.Name),
+		AssignedTo:               &testUserUUID,
 		Stage:                    strPtr("Prospecting"),
 		Status:                   strPtr("Open"),
 		Sentiment:                strPtr("Positive"),

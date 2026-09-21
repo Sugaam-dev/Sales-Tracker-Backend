@@ -39,7 +39,7 @@ func TestActivityAndBulkLeadAPIs(t *testing.T) {
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(pool)
 	leadRepo := repository.NewLeadRepository(pool, gormDB)
-	leadService := NewLeadService(leadRepo, userRepo)
+	leadService := NewLeadService(leadRepo, userRepo, nil, nil)
 
 	// Clean up existing test data
 	_, _ = pool.Exec(ctx, "DELETE FROM activities WHERE lead_id LIKE 'L-9%' OR lead_id LIKE 'L-ACT-%'")

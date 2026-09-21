@@ -926,6 +926,17 @@ func (s *AuthService) ListUsers(ctx context.Context) ([]*models.UserSummary, err
 		return nil, fmt.Errorf("services: list users: %w", err)
 	}
 
+	userMap := make(map[uuid.UUID]*models.User, len(users))
+	for _, u := range users {
+		userMap[u.ID] = u
+	}
+
+	leaderPermsMap, err := s.userRepo.GetAllLeaderPermissions(ctx)
+	if err != nil {
+		s.log.Warn("failed to bulk fetch leader permissions, proceeding with empty permissions", "error", err)
+		leaderPermsMap = make(map[uuid.UUID][]string)
+	}
+
 	summaries := make([]*models.UserSummary, 0, len(users))
 	for _, u := range users {
 		summary := &models.UserSummary{
@@ -942,13 +953,13 @@ func (s *AuthService) ListUsers(ctx context.Context) ([]*models.UserSummary, err
 		}
 
 		if u.ManagerID != nil {
-			if mgr, err := s.userRepo.FindByID(ctx, *u.ManagerID); err == nil && mgr != nil {
+			if mgr, ok := userMap[*u.ManagerID]; ok && mgr != nil {
 				summary.ManagerName = &mgr.Name
 			}
 		}
 
 		if u.Role == models.RoleLeader {
-			if perms, err := s.userRepo.GetLeaderPermissions(ctx, u.ID); err == nil {
+			if perms, ok := leaderPermsMap[u.ID]; ok && perms != nil {
 				summary.Permissions = perms
 			}
 		}

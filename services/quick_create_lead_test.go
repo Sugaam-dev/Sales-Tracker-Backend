@@ -64,10 +64,39 @@ func TestQuickCreateLeadValidationUnits(t *testing.T) {
 		if err := helpers.ValidatePhoneNumber("4155552671", "+1"); err != nil {
 			t.Errorf("Expected valid for 4155552671 +1, got %v", err)
 		}
+		if err := helpers.ValidatePhoneNumber("4155552671", "US|+1"); err != nil {
+			t.Errorf("Expected valid for 4155552671 US|+1, got %v", err)
+		}
 
 		// Valid UK number
 		if err := helpers.ValidatePhoneNumber("7911123456", "+44"); err != nil {
 			t.Errorf("Expected valid for 7911123456 +44, got %v", err)
+		}
+		if err := helpers.ValidatePhoneNumber("7911123456", "GB|+44"); err != nil {
+			t.Errorf("Expected valid for 7911123456 GB|+44, got %v", err)
+		}
+
+		// Valid Germany number (11 digits mobile & 10 digits landline)
+		if err := helpers.ValidatePhoneNumber("15123456789", "+49"); err != nil {
+			t.Errorf("Expected valid for 15123456789 +49, got %v", err)
+		}
+		if err := helpers.ValidatePhoneNumber("3012345678", "DE|+49"); err != nil {
+			t.Errorf("Expected valid for 3012345678 DE|+49, got %v", err)
+		}
+
+		// Valid UAE number (9 digits)
+		if err := helpers.ValidatePhoneNumber("501234567", "+971"); err != nil {
+			t.Errorf("Expected valid for 501234567 +971, got %v", err)
+		}
+
+		// Valid Singapore number (8 digits)
+		if err := helpers.ValidatePhoneNumber("81234567", "+65"); err != nil {
+			t.Errorf("Expected valid for 81234567 +65, got %v", err)
+		}
+
+		// Invalid US area code (e.g. 987 is unassigned in NANP)
+		if err := helpers.ValidatePhoneNumber("9876543210", "+1"); err == nil {
+			t.Error("Expected error for non-existent US area code 987, got nil")
 		}
 
 		// Leading zero should fail
@@ -130,7 +159,7 @@ func TestQuickCreateLeadLifecycleIntegration(t *testing.T) {
 
 	userRepo := repository.NewUserRepository(pool)
 	leadRepo := repository.NewLeadRepository(pool, gormDB)
-	leadService := NewLeadService(leadRepo, userRepo)
+	leadService := NewLeadService(leadRepo, userRepo, nil, nil)
 
 	// Clean up any test leads
 	_, _ = pool.Exec(ctx, "DELETE FROM leads WHERE email LIKE 'quick_test_%'")

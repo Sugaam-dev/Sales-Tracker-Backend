@@ -78,6 +78,9 @@ func (m *mockUserRepo) GetManagedExecutives(ctx context.Context, managerID uuid.
 func (m *mockUserRepo) GetLeaderPermissions(ctx context.Context, leaderID uuid.UUID) ([]string, error) {
 	return nil, nil
 }
+func (m *mockUserRepo) GetAllLeaderPermissions(ctx context.Context) (map[uuid.UUID][]string, error) {
+	return nil, nil
+}
 func (m *mockUserRepo) GrantLeaderPermission(ctx context.Context, leaderID uuid.UUID, permission string, grantedBy *uuid.UUID) error {
 	return nil
 }
@@ -88,6 +91,9 @@ func (m *mockUserRepo) AssignExecutiveToManager(ctx context.Context, executiveID
 	return nil
 }
 func (m *mockUserRepo) FindUsersScoped(ctx context.Context, scope helpers.DataScope) ([]*models.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) FindUsersByRoleScope(ctx context.Context, callerID uuid.UUID, callerRole string) ([]*models.User, error) {
 	return nil, nil
 }
 func (m *mockUserRepo) UpdateUserDetails(ctx context.Context, id uuid.UUID, name, email, role string, isActive bool, managerID *uuid.UUID) error {
@@ -273,6 +279,10 @@ func (m *mockUserRepoForStatus) UpdateUserDetails(ctx context.Context, id uuid.U
 	u.IsActive = isActive
 	u.ManagerID = managerID
 	return nil
+}
+
+func (m *mockUserRepoForStatus) GetAllLeaderPermissions(ctx context.Context) (map[uuid.UUID][]string, error) {
+	return nil, nil
 }
 
 func TestUserStatus_ListUsers_ReturnsCorrectStatus(t *testing.T) {

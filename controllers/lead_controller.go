@@ -2,7 +2,7 @@ package controllers
 
 import (
 	"errors"
-	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -20,14 +20,16 @@ import (
 var leadIDRegex = regexp.MustCompile(`^L-\d+$`)
 
 type LeadController struct {
-	service services.LeadService
-	log     *slog.Logger
+	service        services.LeadService
+	documentParser *services.DocumentParser
+	log            *slog.Logger
 }
 
 func NewLeadController(service services.LeadService, log *slog.Logger) *LeadController {
 	return &LeadController{
-		service: service,
-		log:     log,
+		service:        service,
+		documentParser: services.NewDocumentParser(),
+		log:            log,
 	}
 }
 
@@ -70,11 +72,10 @@ func (ctrl *LeadController) CreateLead(c *gin.Context) {
 
 	var req models.CreateLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fmt.Println("CREATE LEAD VALIDATION ERROR:", err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
@@ -109,7 +110,7 @@ func (ctrl *LeadController) UpdateLead(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
@@ -293,7 +294,7 @@ func (ctrl *LeadController) CreateActivity(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
@@ -329,7 +330,7 @@ func (ctrl *LeadController) CompleteActivity(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
@@ -358,7 +359,7 @@ func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
@@ -375,6 +376,67 @@ func (ctrl *LeadController) BulkCreateLeads(c *gin.Context) {
 	}
 
 	c.JSON(status, resp)
+}
+
+func (ctrl *LeadController) ExtractDocumentLeads(c *gin.Context) {
+	_, _, _, err := middleware.GetAuthUser(c)
+	if err != nil {
+		helpers.ErrorResponse(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Please provide a document file in the 'file' field.",
+		})
+		return
+	}
+
+	// 10MB limit check
+	if fileHeader.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "File size exceeds maximum allowed limit of 10MB.",
+		})
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Failed to read uploaded file.",
+		})
+		return
+	}
+	defer file.Close()
+
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "Failed to process uploaded file bytes.",
+		})
+		return
+	}
+
+	extractedLeads, err := ctrl.documentParser.ExtractLeadsFromDocument(fileBytes, fileHeader.Filename, fileHeader.Header.Get("Content-Type"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"filename": fileHeader.Filename,
+		"total":    len(extractedLeads),
+		"data":     extractedLeads,
+	})
 }
 
 func (ctrl *LeadController) GetActivities(c *gin.Context) {
@@ -461,7 +523,7 @@ func (ctrl *LeadController) LogActivity(c *gin.Context) {
 
 	var req models.LogActivityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed: "+err.Error())
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed: "+helpers.FormatValidationError(err))
 		return
 	}
 

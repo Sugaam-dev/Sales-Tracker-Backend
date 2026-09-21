@@ -60,16 +60,24 @@ func ValidatePhoneNumber(phone string, countryCode string) error {
 	var expectedCountryCode int32
 
 	if trimmedCC != "" {
-		cleanCC := strings.TrimPrefix(trimmedCC, "+")
-		if codeNum, err := strconv.Atoi(cleanCC); err == nil {
-			expectedCountryCode = int32(codeNum)
-			r := phonenumbers.GetRegionCodeForCountryCode(codeNum)
-			if r != "" && r != "ZZ" {
-				region = r
+		parts := strings.FieldsFunc(trimmedCC, func(r rune) bool {
+			return r == '|' || r == ' ' || r == '-'
+		})
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if strings.HasPrefix(p, "+") || (len(p) > 0 && p[0] >= '0' && p[0] <= '9') {
+				cleanCC := strings.TrimPrefix(p, "+")
+				if codeNum, err := strconv.Atoi(cleanCC); err == nil && codeNum > 0 {
+					expectedCountryCode = int32(codeNum)
+					r := phonenumbers.GetRegionCodeForCountryCode(codeNum)
+					if r != "" && r != "ZZ" {
+						region = r
+					}
+				}
+			} else if len(p) == 2 {
+				region = strings.ToUpper(p)
+				expectedCountryCode = int32(phonenumbers.GetCountryCodeForRegion(region))
 			}
-		} else if len(trimmedCC) == 2 {
-			region = strings.ToUpper(trimmedCC)
-			expectedCountryCode = int32(phonenumbers.GetCountryCodeForRegion(region))
 		}
 	}
 

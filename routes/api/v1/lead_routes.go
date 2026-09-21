@@ -19,6 +19,7 @@ func RegisterLeadRoutes(rg *gin.RouterGroup, leadController *controllers.LeadCon
 		leads.GET("/:id/activities", leadController.GetLeadActivities)
 		leads.POST("/:id/activities", leadController.CreateActivity)
 		leads.POST("/bulk", leadController.BulkCreateLeads)
+		leads.POST("/import/document", leadController.ExtractDocumentLeads)
 	}
 
 	activities := rg.Group("/activities")

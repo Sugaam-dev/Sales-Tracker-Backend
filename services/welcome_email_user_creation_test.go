@@ -60,6 +60,22 @@ func (m *mockRecordingEmailService) SendWelcomeEmail(toEmail, name, initialPassw
 	return nil
 }
 
+func (m *mockRecordingEmailService) SendLeadCreated(toEmail, leadName, company, leadID, ownerName string) error {
+	return nil
+}
+
+func (m *mockRecordingEmailService) SendLeadAssigned(toEmail, assigneeName, leadID, company, assignedByName string) error {
+	return nil
+}
+
+func (m *mockRecordingEmailService) SendLeadStatusChanged(toEmail, recipientName, leadID, company, oldStatus, newStatus, oldStage, newStage string) error {
+	return nil
+}
+
+func (m *mockRecordingEmailService) SendActivityNotification(toEmail, recipientName, activityType, desc, dueDate, leadID, company string) error {
+	return nil
+}
+
 func TestWelcomeEmailAndUserCreation(t *testing.T) {
 	_ = godotenv.Load("../.env")
 	_ = godotenv.Load(".env")

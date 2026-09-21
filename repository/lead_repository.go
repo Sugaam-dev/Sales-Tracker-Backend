@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -107,6 +109,30 @@ func (r *leadRepository) GetLeadByLeadID(leadID string) (*models.Lead, error) {
 	if err != nil {
 		return nil, err
 	}
+	var est models.CommercialEstimation
+	if err := r.db.Preload("Resources").Preload("Expenses").Where("lead_id = ?", leadID).First(&est).Error; err == nil {
+		var resRev float64
+		for _, res := range est.Resources {
+			resRev += res.TotalRevenue
+		}
+		var expCost float64
+		for _, exp := range est.Expenses {
+			expCost += exp.Cost
+		}
+		if (resRev > 0 || expCost > 0) || (est.ManualSellingPrice != nil && *est.ManualSellingPrice > 0) {
+			mult := 1.0 + (est.MarkupPercent/100.0) - (est.DiscountPercent/100.0)
+			calcPrice := math.Round((resRev*mult+expCost)*100) / 100
+			effPrice := calcPrice
+			if est.ManualSellingPrice != nil && *est.ManualSellingPrice > 0 {
+				effPrice = math.Round(*est.ManualSellingPrice*100) / 100
+			}
+			lead.Value = &effPrice
+		} else {
+			lead.Value = nil
+		}
+	} else {
+		lead.Value = nil
+	}
 	return &lead, nil
 }
 
@@ -178,14 +204,14 @@ func (r *leadRepository) CheckUserActive(name string) (bool, error) {
 }
 
 // ---------------------------------------------
-// Sahil's Methods (PGX)
+// Team Methods (PGX Pool)
 // ---------------------------------------------
 
 func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, error) {
-	query := "SELECT id, name, status, sort_order, is_active FROM lead_stages WHERE is_active = TRUE ORDER BY sort_order ASC"
+	query := `SELECT id, name, status, sort_order, is_active FROM lead_stages WHERE is_active = true ORDER BY sort_order ASC`
 	rows, err := r.pgx.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("repo: find stages: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -197,6 +223,9 @@ func (r *leadRepository) FindStages(ctx context.Context) ([]*models.LeadStage, e
 		}
 		stages = append(stages, &s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return stages, nil
 }
 
@@ -205,33 +234,33 @@ func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope,
 	var args []any
 	argCount := 1
 
-	whereClauses = append(whereClauses, "deleted_at IS NULL")
+	whereClauses = append(whereClauses, "l.deleted_at IS NULL")
 
 	if !scope.IsUnrestricted {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("(assigned_to = ANY(%s) OR created_by = ANY(%s))", placeholder, placeholder))
+		whereClauses = append(whereClauses, fmt.Sprintf("(l.assigned_to = ANY(%s) OR l.created_by = ANY(%s))", placeholder, placeholder))
 		args = append(args, scope.AllowedUserIDs)
 		argCount++
 	}
 
 	if search != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("(company ILIKE %s OR contact ILIKE %s OR lead_id ILIKE %s)", placeholder, placeholder, placeholder))
+		whereClauses = append(whereClauses, fmt.Sprintf("(l.company ILIKE %s OR l.contact ILIKE %s OR l.lead_id ILIKE %s)", placeholder, placeholder, placeholder))
 		args = append(args, "%"+search+"%")
 		argCount++
 	}
 	if owner != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("owner = $%d", argCount))
+		whereClauses = append(whereClauses, fmt.Sprintf("l.owner = $%d", argCount))
 		args = append(args, owner)
 		argCount++
 	}
 	if priority != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("priority = $%d", argCount))
+		whereClauses = append(whereClauses, fmt.Sprintf("l.priority = $%d", argCount))
 		args = append(args, priority)
 		argCount++
 	}
 	if stage != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("LOWER(stage) = LOWER($%d)", argCount))
+		whereClauses = append(whereClauses, fmt.Sprintf("LOWER(l.stage) = LOWER($%d)", argCount))
 		args = append(args, stage)
 		argCount++
 	}
@@ -241,7 +270,7 @@ func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope,
 		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	countQuery := "SELECT COUNT(*) FROM leads" + whereSQL
+	countQuery := "SELECT COUNT(*) FROM leads l" + whereSQL
 	var total int64
 	err := r.pgx.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
@@ -254,13 +283,13 @@ func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope,
 	var orderByCol string
 	switch sortBy {
 	case "id":
-		orderByCol = "lead_id"
+		orderByCol = "l.lead_id"
 	case "value":
-		orderByCol = "value"
+		orderByCol = "calculated_value"
 	case "createdAt":
-		orderByCol = "created_at"
+		orderByCol = "l.created_at"
 	default:
-		orderByCol = "created_at"
+		orderByCol = "l.created_at"
 	}
 
 	dir := "DESC"
@@ -272,8 +301,38 @@ func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope,
 	limitOffsetSQL := fmt.Sprintf(" ORDER BY %s %s LIMIT $%d OFFSET $%d", orderByCol, dir, argCount, argCount+1)
 	args = append(args, limit, offset)
 
-	dataQuery := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_by, assigned_to, created_at, updated_at 
-				  FROM leads` + whereSQL + limitOffsetSQL
+	dataQuery := `SELECT 
+		l.id, l.lead_id, l.company, l.project_name, l.contact, l.email, l.phone, l.phone_country, 
+		l.office_phone, l.office_phone_country, l.owner, l.industry, l.size, l.region, l.source, 
+		l.stage, l.status, l.sentiment, l.priority, 
+		COALESCE(
+			ce.manual_selling_price,
+			CASE WHEN ce.id IS NOT NULL AND (COALESCE(r.total_res_revenue, 0) > 0 OR COALESCE(e.total_exp_cost, 0) > 0) THEN
+				ROUND(
+					COALESCE(r.total_res_revenue, 0) * (1.0 + (COALESCE(ce.markup_percent, 0) - COALESCE(ce.discount_percent, 0)) / 100.0) 
+					+ COALESCE(e.total_exp_cost, 0),
+					2
+				)
+			ELSE NULL
+			END
+		) AS calculated_value,
+		l.lost_reason, l.best_time, l.lifecycle_template, l.kam_name, l.designation, 
+		l.best_time_to_connect, l.alternate_phone, l.alternate_phone_country, 
+		l.linkedin_profile_url, l.linkedin_company_page_url, l.estimated_requirement_date, 
+		l.last_contact_date, l.next_follow_up, l.basic_requirements, l.notes, 
+		l.request_details, l.request_type, l.created_by, l.assigned_to, l.created_at, l.updated_at
+	FROM leads l
+	LEFT JOIN commercial_estimations ce ON ce.lead_id = l.lead_id
+	LEFT JOIN (
+		SELECT commercial_estimation_id, SUM(total_revenue) AS total_res_revenue
+		FROM commercial_resources
+		GROUP BY commercial_estimation_id
+	) r ON r.commercial_estimation_id = ce.id
+	LEFT JOIN (
+		SELECT commercial_estimation_id, SUM(cost) AS total_exp_cost
+		FROM commercial_expenses
+		GROUP BY commercial_estimation_id
+	) e ON e.commercial_estimation_id = ce.id` + whereSQL + limitOffsetSQL
 
 	rows, err := r.pgx.Query(ctx, dataQuery, args...)
 	if err != nil {
@@ -308,9 +367,39 @@ func (r *leadRepository) FindLeads(ctx context.Context, scope helpers.DataScope,
 }
 
 func (r *leadRepository) FindByID(ctx context.Context, leadID string) (*models.Lead, error) {
-	query := `SELECT id, lead_id, company, project_name, contact, email, phone, phone_country, office_phone, office_phone_country, owner, industry, size, region, source, stage, status, sentiment, priority, value, lost_reason, best_time, lifecycle_template, kam_name, designation, best_time_to_connect, alternate_phone, alternate_phone_country, linkedin_profile_url, linkedin_company_page_url, estimated_requirement_date, last_contact_date, next_follow_up, basic_requirements, notes, request_details, request_type, created_by, assigned_to, created_at, updated_at 
-			  FROM leads 
-			  WHERE lead_id = $1 AND deleted_at IS NULL`
+	query := `SELECT 
+		l.id, l.lead_id, l.company, l.project_name, l.contact, l.email, l.phone, l.phone_country, 
+		l.office_phone, l.office_phone_country, l.owner, l.industry, l.size, l.region, l.source, 
+		l.stage, l.status, l.sentiment, l.priority, 
+		COALESCE(
+			ce.manual_selling_price,
+			CASE WHEN ce.id IS NOT NULL AND (COALESCE(r.total_res_revenue, 0) > 0 OR COALESCE(e.total_exp_cost, 0) > 0) THEN
+				ROUND(
+					COALESCE(r.total_res_revenue, 0) * (1.0 + (COALESCE(ce.markup_percent, 0) - COALESCE(ce.discount_percent, 0)) / 100.0) 
+					+ COALESCE(e.total_exp_cost, 0),
+					2
+				)
+			ELSE NULL
+			END
+		) AS calculated_value,
+		l.lost_reason, l.best_time, l.lifecycle_template, l.kam_name, l.designation, 
+		l.best_time_to_connect, l.alternate_phone, l.alternate_phone_country, 
+		l.linkedin_profile_url, l.linkedin_company_page_url, l.estimated_requirement_date, 
+		l.last_contact_date, l.next_follow_up, l.basic_requirements, l.notes, 
+		l.request_details, l.request_type, l.created_by, l.assigned_to, l.created_at, l.updated_at 
+	FROM leads l
+	LEFT JOIN commercial_estimations ce ON ce.lead_id = l.lead_id
+	LEFT JOIN (
+		SELECT commercial_estimation_id, SUM(total_revenue) AS total_res_revenue
+		FROM commercial_resources
+		GROUP BY commercial_estimation_id
+	) r ON r.commercial_estimation_id = ce.id
+	LEFT JOIN (
+		SELECT commercial_estimation_id, SUM(cost) AS total_exp_cost
+		FROM commercial_expenses
+		GROUP BY commercial_estimation_id
+	) e ON e.commercial_estimation_id = ce.id
+	WHERE l.lead_id = $1 AND l.deleted_at IS NULL`
 	row := r.pgx.QueryRow(ctx, query, leadID)
 
 	var l models.Lead
@@ -370,16 +459,41 @@ func (r *leadRepository) GetHeatMapAggregation(ctx context.Context) ([]models.Le
 	return result, nil
 }
 
+type rawActivityFeedDBItem struct {
+	ID        uint       `json:"id"`
+	Type      string     `json:"type"`
+	Desc      string     `json:"desc"`
+	Outcome   *string    `json:"outcome"`
+	DueDate   *time.Time `json:"due_date"`
+	Completed bool       `json:"completed"`
+	CreatedAt time.Time  `json:"created_at"`
+	LeadName  *string    `json:"lead_name"`
+	LeadID    string     `json:"lead_id"`
+	Company   string     `json:"company"`
+	Geography *string    `json:"geography"`
+	Industry  *string    `json:"industry"`
+	DealSize  *string    `json:"deal_size"`
+	UserName  *string    `json:"user_name"`
+	UserEmail *string    `json:"user_email"`
+	Priority  *string    `json:"priority"`
+	Status    *string    `json:"status"`
+}
+
+type activityTypeCountDBRow struct {
+	Type  string `json:"type"`
+	Count int64  `json:"count"`
+}
+
 func (r *leadRepository) FindActivitiesFeed(ctx context.Context, scope helpers.DataScope, q models.GetActivitiesQuery) ([]models.ActivityFeedItemResponse, int64, models.ActivityTypeCounts, error) {
-	var whereClauses []string
+	var baseWhereClauses []string
 	var args []interface{}
 	argCount := 1
 
-	whereClauses = append(whereClauses, "l.deleted_at IS NULL")
+	baseWhereClauses = append(baseWhereClauses, "l.deleted_at IS NULL")
 
 	if !scope.IsUnrestricted {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("(l.assigned_to = ANY(%s) OR l.created_by = ANY(%s))", placeholder, placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("(l.assigned_to = ANY(%s) OR l.created_by = ANY(%s))", placeholder, placeholder))
 		args = append(args, scope.AllowedUserIDs)
 		argCount++
 	}
@@ -390,117 +504,53 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, scope helpers.D
 	}
 	if repFilter != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("(u.id::text = %s OR u.name ILIKE %s OR u.email ILIKE %s OR a.rep::text = %s)", placeholder, placeholder, placeholder, placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("(u.id::text = %s OR u.name ILIKE %s OR u.email ILIKE %s OR a.rep::text = %s)", placeholder, placeholder, placeholder, placeholder))
 		args = append(args, repFilter)
 		argCount++
 	}
 
 	if q.LeadID != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("a.lead_id = %s", placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("a.lead_id = %s", placeholder))
 		args = append(args, q.LeadID)
 		argCount++
 	}
 
 	if q.Geography != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("l.region ILIKE %s", placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("l.region ILIKE %s", placeholder))
 		args = append(args, "%"+q.Geography+"%")
 		argCount++
 	}
 
 	if q.Industry != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("l.industry ILIKE %s", placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("l.industry ILIKE %s", placeholder))
 		args = append(args, "%"+q.Industry+"%")
 		argCount++
 	}
 
 	if q.DealSize != "" {
 		placeholder := fmt.Sprintf("$%d", argCount)
-		whereClauses = append(whereClauses, fmt.Sprintf("l.size ILIKE %s", placeholder))
+		baseWhereClauses = append(baseWhereClauses, fmt.Sprintf("l.size ILIKE %s", placeholder))
 		args = append(args, "%"+q.DealSize+"%")
 		argCount++
 	}
 
 	if q.DueStatus == "overdue" {
-		whereClauses = append(whereClauses, "a.due_date < CURRENT_DATE AND a.completed = FALSE")
+		baseWhereClauses = append(baseWhereClauses, "a.due_date < CURRENT_DATE AND a.completed = FALSE")
 	} else if q.DueStatus == "upcoming" {
-		whereClauses = append(whereClauses, "a.due_date >= CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE")
+		baseWhereClauses = append(baseWhereClauses, "a.due_date >= CURRENT_DATE AND a.due_date <= CURRENT_DATE + INTERVAL '7 days' AND a.completed = FALSE")
 	}
 
-	// Query 2: Type Counts (unaffected by selected type filter and unaffected by pagination)
-	typeCountWhereSQL := ""
-	if len(whereClauses) > 0 {
-		typeCountWhereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
-	}
+	baseWhereSQL := " WHERE " + strings.Join(baseWhereClauses, " AND ")
 
-	typeCountsQuery := `SELECT a.type, COUNT(*) 
-						FROM activities a 
-						INNER JOIN leads l ON a.lead_id = l.lead_id 
-						LEFT JOIN users u ON a.rep = u.id` + typeCountWhereSQL + ` GROUP BY a.type`
-
-	var typeCounts models.ActivityTypeCounts
-	typeRows, err := r.pgx.Query(ctx, typeCountsQuery, args...)
-	if err != nil {
-		return nil, 0, typeCounts, fmt.Errorf("repo: type counts: %w", err)
-	}
-	defer typeRows.Close()
-
-	for typeRows.Next() {
-		var rawType string
-		var cnt int64
-		if err := typeRows.Scan(&rawType, &cnt); err == nil {
-			typeCounts.All += cnt
-			normType := strings.ToLower(strings.TrimSpace(rawType))
-			switch normType {
-			case "call":
-				typeCounts.Call += cnt
-			case "email":
-				typeCounts.Email += cnt
-			case "meeting":
-				typeCounts.Meeting += cnt
-			case "demo":
-				typeCounts.Demo += cnt
-			case "linkedin":
-				typeCounts.Linkedin += cnt
-			case "proposal_sent", "proposal sent", "proposalsent":
-				typeCounts.ProposalSent += cnt
-			default:
-				typeCounts.Other += cnt
-			}
-		}
-	}
-
-	// Query 1: Filtered Paginated Data
-	dataWhereClauses := append([]string{}, whereClauses...)
-	dataArgs := append([]interface{}{}, args...)
-	dataArgCount := argCount
-
+	filteredWhereSQL := "WHERE 1=1"
 	if q.Type != "" {
-		placeholder := fmt.Sprintf("$%d", dataArgCount)
-		dataWhereClauses = append(dataWhereClauses, fmt.Sprintf("LOWER(a.type) = LOWER(%s)", placeholder))
-		dataArgs = append(dataArgs, q.Type)
-		dataArgCount++
-	}
-
-	dataWhereSQL := ""
-	if len(dataWhereClauses) > 0 {
-		dataWhereSQL = " WHERE " + strings.Join(dataWhereClauses, " AND ")
-	}
-
-	countQuery := `SELECT COUNT(*) 
-				   FROM activities a 
-				   INNER JOIN leads l ON a.lead_id = l.lead_id 
-				   LEFT JOIN users u ON a.rep = u.id` + dataWhereSQL
-	var total int64
-	err = r.pgx.QueryRow(ctx, countQuery, dataArgs...).Scan(&total)
-	if err != nil {
-		return nil, 0, typeCounts, fmt.Errorf("repo: count activities: %w", err)
-	}
-
-	if total == 0 {
-		return []models.ActivityFeedItemResponse{}, 0, typeCounts, nil
+		placeholder := fmt.Sprintf("$%d", argCount)
+		filteredWhereSQL += fmt.Sprintf(" AND LOWER(type) = LOWER(%s)", placeholder)
+		args = append(args, q.Type)
+		argCount++
 	}
 
 	page := q.Page
@@ -515,80 +565,134 @@ func (r *leadRepository) FindActivitiesFeed(ctx context.Context, scope helpers.D
 	}
 	offset := (page - 1) * limit
 
-	limitOffsetSQL := fmt.Sprintf(" ORDER BY a.created_at DESC LIMIT $%d OFFSET $%d", dataArgCount, dataArgCount+1)
-	dataArgs = append(dataArgs, limit, offset)
+	limitPlaceholder := fmt.Sprintf("$%d", argCount)
+	offsetPlaceholder := fmt.Sprintf("$%d", argCount+1)
+	args = append(args, limit, offset)
 
-	dataQuery := `SELECT a.id, a.type, a."desc", a.outcome, a.due_date, a.completed, a.created_at, 
-						 l.contact, l.lead_id, l.company, l.region, l.industry, l.size,
-						 u.name, u.email,
-						 l.priority, l.status
-				  FROM activities a 
-				  INNER JOIN leads l ON a.lead_id = l.lead_id 
-				  LEFT JOIN users u ON a.rep = u.id` + dataWhereSQL + limitOffsetSQL
+	query := fmt.Sprintf(`
+	WITH base_activities AS (
+		SELECT a.id, a.type, a."desc", a.outcome, a.due_date, a.completed, a.created_at,
+		       l.contact AS lead_name, l.lead_id, l.company, l.region AS geography, l.industry, l.size AS deal_size,
+		       u.name AS user_name, u.email AS user_email,
+		       l.priority, l.status
+		FROM activities a
+		INNER JOIN leads l ON a.lead_id = l.lead_id
+		LEFT JOIN users u ON a.rep = u.id
+		%s
+	),
+	type_counts AS (
+		SELECT type, COUNT(*) AS cnt
+		FROM base_activities
+		GROUP BY type
+	),
+	filtered_activities AS (
+		SELECT *
+		FROM base_activities
+		%s
+	),
+	total_count AS (
+		SELECT COUNT(*) AS total FROM filtered_activities
+	),
+	paged_activities AS (
+		SELECT *
+		FROM filtered_activities
+		ORDER BY created_at DESC
+		LIMIT %s OFFSET %s
+	)
+	SELECT
+		(SELECT total FROM total_count) AS total,
+		COALESCE((SELECT json_agg(json_build_object('type', tc.type, 'count', tc.cnt)) FROM type_counts tc), '[]'::json) AS type_counts_json,
+		COALESCE((SELECT json_agg(json_build_object(
+			'id', pa.id,
+			'type', pa.type,
+			'desc', pa."desc",
+			'outcome', pa.outcome,
+			'due_date', pa.due_date,
+			'completed', pa.completed,
+			'created_at', pa.created_at,
+			'lead_name', pa.lead_name,
+			'lead_id', pa.lead_id,
+			'company', pa.company,
+			'geography', pa.geography,
+			'industry', pa.industry,
+			'deal_size', pa.deal_size,
+			'user_name', pa.user_name,
+			'user_email', pa.user_email,
+			'priority', pa.priority,
+			'status', pa.status
+		) ORDER BY pa.created_at DESC) FROM paged_activities pa), '[]'::json) AS items_json;`,
+		baseWhereSQL, filteredWhereSQL, limitPlaceholder, offsetPlaceholder)
 
-	rows, err := r.pgx.Query(ctx, dataQuery, dataArgs...)
+	var total int64
+	var typeCountsBytes, itemsBytes []byte
+	err := r.pgx.QueryRow(ctx, query, args...).Scan(&total, &typeCountsBytes, &itemsBytes)
 	if err != nil {
-		return nil, 0, typeCounts, fmt.Errorf("repo: find activities feed: %w", err)
+		return nil, 0, models.ActivityTypeCounts{}, fmt.Errorf("repo: find activities feed: %w", err)
 	}
-	defer rows.Close()
 
-	var items []models.ActivityFeedItemResponse
-	for rows.Next() {
-		var id uint
-		var actType, desc string
-		var outcome *string
-		var dueDate *time.Time
-		var completed bool
-		var createdAt time.Time
-		var leadName, geography, industry, dealSize *string
-		var leadID, company string
-		var userName, userEmail *string
-		var priority, status *string
-
-		err := rows.Scan(
-			&id, &actType, &desc, &outcome, &dueDate, &completed, &createdAt,
-			&leadName, &leadID, &company, &geography, &industry, &dealSize,
-			&userName, &userEmail,
-			&priority, &status,
-		)
-		if err != nil {
-			return nil, 0, typeCounts, fmt.Errorf("repo: scan activity feed: %w", err)
+	var typeCounts models.ActivityTypeCounts
+	var tcRows []activityTypeCountDBRow
+	if err := json.Unmarshal(typeCountsBytes, &tcRows); err == nil {
+		for _, tc := range tcRows {
+			typeCounts.All += tc.Count
+			normType := strings.ToLower(strings.TrimSpace(tc.Type))
+			switch normType {
+			case "call":
+				typeCounts.Call += tc.Count
+			case "email":
+				typeCounts.Email += tc.Count
+			case "meeting":
+				typeCounts.Meeting += tc.Count
+			case "demo":
+				typeCounts.Demo += tc.Count
+			case "linkedin":
+				typeCounts.Linkedin += tc.Count
+			case "proposal_sent", "proposal sent", "proposalsent":
+				typeCounts.ProposalSent += tc.Count
+			default:
+				typeCounts.Other += tc.Count
+			}
 		}
+	}
 
+	var rawItems []rawActivityFeedDBItem
+	if err := json.Unmarshal(itemsBytes, &rawItems); err != nil {
+		return nil, 0, typeCounts, fmt.Errorf("repo: unmarshal activity feed items: %w", err)
+	}
+
+	items := make([]models.ActivityFeedItemResponse, 0, len(rawItems))
+	for _, row := range rawItems {
 		var repStr *string
-		if userName != nil && *userName != "" {
-			repStr = userName
-		} else if userEmail != nil && *userEmail != "" {
-			repStr = userEmail
+		if row.UserName != nil && *row.UserName != "" {
+			repStr = row.UserName
+		} else if row.UserEmail != nil && *row.UserEmail != "" {
+			repStr = row.UserEmail
 		}
 
 		var dueDateStr *string
-		if dueDate != nil {
-			d := dueDate.Format("2006-01-02")
+		if row.DueDate != nil {
+			d := row.DueDate.Local().Format("2006-01-02")
 			dueDateStr = &d
 		}
 
 		items = append(items, models.ActivityFeedItemResponse{
-			ID:        id,
-			Type:      actType,
-			Desc:      desc,
-			LeadName:  leadName,
-			LeadID:    leadID,
-			Company:   company,
+			ID:        row.ID,
+			Type:      row.Type,
+			Desc:      row.Desc,
+			LeadName:  row.LeadName,
+			LeadID:    row.LeadID,
+			Company:   row.Company,
 			Rep:       repStr,
-			Timestamp: createdAt.Format(time.RFC3339),
-			Outcome:   outcome,
-			Geography: geography,
-			Industry:  industry,
-			DealSize:  dealSize,
+			Timestamp: row.CreatedAt.Local().Format(time.RFC3339),
+			Outcome:   row.Outcome,
+			Geography: row.Geography,
+			Industry:  row.Industry,
+			DealSize:  row.DealSize,
 			DueDate:   dueDateStr,
-			Completed: completed,
-			Priority:  priority,
-			Status:    status,
+			Completed: row.Completed,
+			Priority:  row.Priority,
+			Status:    row.Status,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, typeCounts, err
 	}
 
 	return items, total, typeCounts, nil

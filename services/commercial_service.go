@@ -38,30 +38,44 @@ func NewCommercialService(
 	}
 }
 
-func (s *commercialService) checkLeadAccess(ctx context.Context, leadID string, userRole, userEmail string) error {
+func (s *commercialService) getLeadAndCheckAccess(ctx context.Context, leadID string, userRole, userEmail string) (*models.LeadContextDTO, error) {
 	lead, err := s.leadRepo.FindByID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, helpers.ErrNotFound) {
-			return ErrNotFound
+			return nil, ErrNotFound
 		}
-		return err
+		return nil, err
 	}
 
 	user, err := s.userRepo.FindByEmail(ctx, userEmail)
 	if err != nil {
-		return ErrUnauthorized
+		return nil, ErrUnauthorized
 	}
 
 	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, user.ID, userRole)
 	if err != nil {
-		return ErrUnauthorized
+		return nil, ErrUnauthorized
 	}
 
 	if !scope.CanAccessLead(lead) {
-		return ErrUnauthorized
+		return nil, ErrUnauthorized
 	}
 
-	return nil
+	var estReqDateStr *string
+	if lead.EstimatedRequirementDate != nil {
+		d := lead.EstimatedRequirementDate.Format("2006-01-02")
+		estReqDateStr = &d
+	}
+
+	leadContext := &models.LeadContextDTO{
+		LeadID:                   lead.LeadID,
+		Company:                  lead.Company,
+		ProjectName:              lead.ProjectName,
+		Owner:                    lead.Owner,
+		EstimatedRequirementDate: estReqDateStr,
+	}
+
+	return leadContext, nil
 }
 
 func (s *commercialService) resolveTargetCurrency(param string, estimateCurrency string) (string, error) {
@@ -170,24 +184,61 @@ func (s *commercialService) mapToDetailsDTO(est *models.CommercialEstimation, ta
 }
 
 func (s *commercialService) GetCommercial(ctx context.Context, leadID string, userRole, userEmail string, currencyParam string) (*models.GetCommercialResponse, error) {
-	leadContext, err := s.commRepo.GetLeadContext(ctx, leadID)
+	leadContext, err := s.getLeadAndCheckAccess(ctx, leadID, userRole, userEmail)
 	if err != nil {
-		if errors.Is(err, helpers.ErrNotFound) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
 
-	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
-		return nil, err
-	}
-
-	est, err := s.commRepo.GetOrCreateDraft(ctx, leadID)
+	est, err := s.commRepo.GetByLeadID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, helpers.ErrNotFound) {
-			return nil, ErrNotFound
+			// In-memory read-only blank draft without writing to DB
+			now := time.Now()
+			startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			durationMonths := 1
+			endDate := startDate.AddDate(0, 1, 0)
+			if leadContext.EstimatedRequirementDate != nil {
+				if parsedReqDate, pErr := time.Parse("2006-01-02", *leadContext.EstimatedRequirementDate); pErr == nil {
+					reqDate := time.Date(parsedReqDate.Year(), parsedReqDate.Month(), parsedReqDate.Day(), 0, 0, 0, 0, time.UTC)
+					if reqDate.After(startDate) {
+						endDate = reqDate
+						months := (endDate.Year()-startDate.Year())*12 + int(endDate.Month()-startDate.Month())
+						if endDate.Day() > startDate.Day() {
+							months++
+						}
+						if months < 1 {
+							months = 1
+						}
+						durationMonths = months
+					}
+				}
+			}
+
+			est = &models.CommercialEstimation{
+				LeadID:                  leadID,
+				Currency:                models.CurrencyUSD,
+				BillingType:             "T&M",
+				StartDate:               startDate,
+				EstimatedDurationMonths: durationMonths,
+				EstimatedEndDate:        endDate,
+				MarkupPercent:           0.00,
+				DiscountPercent:         0.00,
+				Status:                  models.CommercialStatusDraft,
+				Resources:               []models.CommercialResource{},
+				Expenses:                []models.CommercialExpense{},
+				SDLCAllocations: []models.SDLCAllocation{
+					{Phase: "Discovery & Architecture", ManDays: 0},
+					{Phase: "UI/UX Design", ManDays: 0},
+					{Phase: "Core Development", ManDays: 0},
+					{Phase: "QA & Testing", ManDays: 0},
+					{Phase: "Deployment & UAT", ManDays: 0},
+				},
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	targetCurrency, err := s.resolveTargetCurrency(currencyParam, est.Currency)
@@ -210,24 +261,42 @@ func (s *commercialService) UpdateCommercial(
 	currencyParam string,
 	req models.UpdateCommercialRequest,
 ) (*models.GetCommercialResponse, error) {
-	leadContext, err := s.commRepo.GetLeadContext(ctx, leadID)
+	leadContext, err := s.getLeadAndCheckAccess(ctx, leadID, userRole, userEmail)
 	if err != nil {
-		if errors.Is(err, helpers.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
 		return nil, err
 	}
 
 	existing, err := s.commRepo.GetByLeadID(ctx, leadID)
 	if err != nil {
 		if errors.Is(err, helpers.ErrNotFound) {
-			return nil, ErrNotFound
+			now := time.Now()
+			startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			endDate := startDate.AddDate(0, 1, 0)
+			if leadContext.EstimatedRequirementDate != nil {
+				if parsedReqDate, pErr := time.Parse("2006-01-02", *leadContext.EstimatedRequirementDate); pErr == nil {
+					reqDate := time.Date(parsedReqDate.Year(), parsedReqDate.Month(), parsedReqDate.Day(), 0, 0, 0, 0, time.UTC)
+					if reqDate.After(startDate) {
+						endDate = reqDate
+					}
+				}
+			}
+			existing = &models.CommercialEstimation{
+				LeadID:                  leadID,
+				Currency:                models.CurrencyUSD,
+				BillingType:             "T&M",
+				StartDate:               startDate,
+				EstimatedDurationMonths: 1,
+				EstimatedEndDate:        endDate,
+				MarkupPercent:           0.00,
+				DiscountPercent:         0.00,
+				Status:                  models.CommercialStatusDraft,
+				Resources:               []models.CommercialResource{},
+				Expenses:                []models.CommercialExpense{},
+				SDLCAllocations:         []models.SDLCAllocation{},
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	// 1. Solve Currency
@@ -371,6 +440,22 @@ func (s *commercialService) UpdateCommercial(
 		return nil, err
 	}
 
+	// Calculate authoritative financial summary in Base USD to sync Deal Value (leads.value)
+	baseSummary := CalculateFinancialSummary(
+		updated.Resources,
+		updated.Expenses,
+		updated.MarkupPercent,
+		updated.DiscountPercent,
+		updated.ManualSellingPrice,
+		updated.EstimatedDurationMonths,
+	)
+
+	// Set lead Deal Value from the evaluated commercial selling price
+	dealValue := baseSummary.EffectiveSellingPrice
+	_ = s.leadRepo.UpdateLead(leadID, map[string]interface{}{
+		"value": dealValue,
+	})
+
 	targetCurrency, err := s.resolveTargetCurrency(currencyParam, updated.Currency)
 	if err != nil {
 		targetCurrency = updated.Currency
@@ -385,15 +470,8 @@ func (s *commercialService) UpdateCommercial(
 }
 
 func (s *commercialService) GetAnalytics(ctx context.Context, leadID string, userRole, userEmail string, currencyParam string) (*models.CommercialAnalyticsResponse, error) {
-	_, err := s.commRepo.GetLeadContext(ctx, leadID)
+	_, err := s.getLeadAndCheckAccess(ctx, leadID, userRole, userEmail)
 	if err != nil {
-		if errors.Is(err, helpers.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-
-	if err := s.checkLeadAccess(ctx, leadID, userRole, userEmail); err != nil {
 		return nil, err
 	}
 

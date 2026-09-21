@@ -4,10 +4,11 @@ import "github.com/google/uuid"
 
 // LeadContextDTO holds the read-only Lead fields displayed on the Commercial page.
 type LeadContextDTO struct {
-	LeadID      string  `json:"leadId"`
-	Company     string  `json:"company"`
-	ProjectName *string `json:"projectName,omitempty"`
-	Owner       *string `json:"owner,omitempty"`
+	LeadID                   string  `json:"leadId"`
+	Company                  string  `json:"company"`
+	ProjectName              *string `json:"projectName,omitempty"`
+	Owner                    *string `json:"owner,omitempty"`
+	EstimatedRequirementDate *string `json:"estimatedRequirementDate,omitempty"`
 }
 
 // CommercialResourceDTO represents input/output of a single resource row.

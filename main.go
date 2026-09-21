@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -45,6 +46,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Configure underlying database/sql connection pool for GORM
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		log.Error("failed to get underlying sql.DB from gorm", "error", err)
+		os.Exit(1)
+	}
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
+
 	// Migrate Lead, Commercial, Task, and RBAC models
 	gormDB.AutoMigrate(
 		&models.Lead{}, &models.Activity{}, &models.LeadStage{},
@@ -67,11 +79,21 @@ func main() {
 
 	// Dependency Injection: Utility helpers.
 	jwtManager := helpers.NewJWTManager(cfg.JWT)
-	emailService := helpers.NewEmailService(helpers.SMTPConfig{
-		Host:     cfg.SMTP.Host,
-		Port:     cfg.SMTP.Port,
-		Username: cfg.SMTP.Username,
-		Password: cfg.SMTP.Password,
+	emailService := helpers.NewEmailService(helpers.EmailServiceConfig{
+		Provider:   cfg.Email.Provider,
+		MailSender: cfg.Email.MailSender,
+		SMTP: helpers.SMTPConfig{
+			Host:     cfg.SMTP.Host,
+			Port:     cfg.SMTP.Port,
+			Username: cfg.SMTP.Username,
+			Password: cfg.SMTP.Password,
+		},
+		Azure: helpers.AzureGraphConfig{
+			ClientID:     cfg.Azure.ClientID,
+			TenantID:     cfg.Azure.TenantID,
+			ClientSecret: cfg.Azure.ClientSecret,
+			MailSender:   cfg.Email.MailSender,
+		},
 	}, log)
 	smsService := helpers.NewConsoleSMSService(log)
 	rateLimiter := middleware.NewRateLimiter(cfg.Rate.MaxAttempts, cfg.Rate.Window)
@@ -97,7 +119,7 @@ func main() {
 
 	// Lead Module dependencies
 	leadRepo := repository.NewLeadRepository(db, gormDB)
-	leadService := services.NewLeadService(leadRepo, userRepo)
+	leadService := services.NewLeadService(leadRepo, userRepo, emailService, log)
 	leadController := controllers.NewLeadController(leadService, log)
 
 	// Task Module dependencies
@@ -123,8 +145,9 @@ func main() {
 	}
 	router := gin.New()
 	router.SetTrustedProxies(nil)
-	router.Use(gin.Recovery())
+	router.Use(middleware.RecoveryMiddleware(log))
 	router.Use(middleware.CORSMiddleware())
+	router.Use(middleware.MetricsMiddleware(log, db, gormDB))
 
 	// Bind application endpoint route mappings.
 	routes.RegisterRoutes(

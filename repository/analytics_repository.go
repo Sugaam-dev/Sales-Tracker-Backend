@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"gorm.io/gorm"
 )
+
+type stageItemJSON struct {
+	Stage string  `json:"stage"`
+	Count int64   `json:"count"`
+	Value float64 `json:"value"`
+}
+
+type regionItemJSON struct {
+	Region string  `json:"region"`
+	Count  int64   `json:"count"`
+	Value  float64 `json:"value"`
+}
+
+type repItemJSON struct {
+	Name       string  `json:"name"`
+	Won        float64 `json:"won"`
+	Pipeline   float64 `json:"pipeline"`
+	Lost       float64 `json:"lost"`
+	TotalDeals int64   `json:"total_deals"`
+}
+
+type actItemJSON struct {
+	Type  string `json:"type"`
+	Count int64  `json:"count"`
+}
+
+type priItemJSON struct {
+	Priority string  `json:"priority"`
+	Count    int64   `json:"count"`
+	Value    float64 `json:"value"`
+}
 
 type AnalyticsRepository interface {
 	GetDashboardSummary(ctx context.Context, scope helpers.DataScope, owner, region string) (*models.DashboardSummaryData, error)
@@ -60,107 +92,107 @@ func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, scope hel
 		argIdx++
 	}
 
-	whereSQL := " WHERE " + strings.Join(leadWhereClauses, " AND ")
+	whereSQL := strings.Join(leadWhereClauses, " AND ")
 
-	// 2. Aggregate core KPI metrics
-	metricsQuery := fmt.Sprintf(`
+	// Consolidated Single-Round-Trip Dashboard Query
+	dashboardQuery := fmt.Sprintf(`
+		WITH filtered_leads AS (
+			SELECT id, lead_id, company, project_name, owner, stage, status, value, region, assigned_to, created_by, deleted_at
+			FROM leads
+			WHERE %s
+		),
+		metrics AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN value ELSE 0 END), 0) AS pipeline_value,
+				COUNT(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN 1 END) AS open_deals_count,
+				COALESCE(SUM(
+					CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN
+						value * (CASE 
+							WHEN stage = 'Prospecting' THEN 0.10
+							WHEN stage = 'Qualification' THEN 0.20
+							WHEN stage = 'Initial Discussion' THEN 0.30
+							WHEN stage = 'Needs Analysis' THEN 0.35
+							WHEN stage = 'Proposal' THEN 0.50
+							WHEN stage = 'Negotiation' THEN 0.80
+							ELSE 0.10
+						END)
+					ELSE 0 END
+				), 0) AS expected_value,
+				COUNT(CASE WHEN status = 'Won' OR stage = 'Closed Won' THEN 1 END) AS won_leads_count,
+				COUNT(CASE WHEN status = 'Lost' OR stage = 'Closed Lost' THEN 1 END) AS lost_leads_count
+			FROM filtered_leads
+		),
+		stage_dist AS (
+			SELECT COALESCE(stage, 'Prospecting') AS stage, COUNT(*) AS count, COALESCE(SUM(value), 0) AS value
+			FROM filtered_leads
+			GROUP BY stage
+		),
+		region_dist AS (
+			SELECT COALESCE(region, 'Other') AS region, COUNT(*) AS count, COALESCE(SUM(value), 0) AS value
+			FROM filtered_leads
+			GROUP BY region
+		),
+		overdue AS (
+			SELECT COUNT(a.id) AS overdue_count
+			FROM activities a
+			JOIN filtered_leads fl ON a.lead_id = fl.lead_id
+			WHERE a.completed = false AND a.due_date < CURRENT_DATE
+		)
 		SELECT
-			COALESCE(SUM(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN value ELSE 0 END), 0) AS pipeline_value,
-			COUNT(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN 1 END) AS open_deals_count,
-			COALESCE(SUM(
-				CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN
-					value * (CASE 
-						WHEN stage = 'Prospecting' THEN 0.10
-						WHEN stage = 'Qualification' THEN 0.20
-						WHEN stage = 'Initial Discussion' THEN 0.30
-						WHEN stage = 'Needs Analysis' THEN 0.35
-						WHEN stage = 'Proposal' THEN 0.50
-						WHEN stage = 'Negotiation' THEN 0.80
-						ELSE 0.10
-					END)
-				ELSE 0 END
-			), 0) AS expected_value,
-			COUNT(CASE WHEN status = 'Won' OR stage = 'Closed Won' THEN 1 END) AS won_leads_count,
-			COUNT(CASE WHEN status = 'Lost' OR stage = 'Closed Lost' THEN 1 END) AS lost_leads_count
-		FROM leads
-		%s
+			m.pipeline_value,
+			m.open_deals_count,
+			m.expected_value,
+			m.won_leads_count,
+			m.lost_leads_count,
+			o.overdue_count,
+			COALESCE((SELECT json_agg(json_build_object('stage', sd.stage, 'count', sd.count, 'value', sd.value)) FROM stage_dist sd), '[]'::json) AS stage_json,
+			COALESCE((SELECT json_agg(json_build_object('region', rd.region, 'count', rd.count, 'value', rd.value)) FROM region_dist rd), '[]'::json) AS region_json
+		FROM metrics m
+		CROSS JOIN overdue o;
 	`, whereSQL)
 
-	err := r.pool.QueryRow(ctx, metricsQuery, leadArgs...).Scan(
+	var stgJSONBytes, regJSONBytes []byte
+	err := r.pool.QueryRow(ctx, dashboardQuery, leadArgs...).Scan(
 		&data.PipelineValue,
 		&data.OpenDealsCount,
 		&data.ExpectedValue,
 		&data.WonLeadsCount,
 		&data.LostLeadsCount,
+		&data.OverdueCount,
+		&stgJSONBytes,
+		&regJSONBytes,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("analytics repo: query dashboard metrics: %w", err)
+		return nil, fmt.Errorf("analytics repo: query dashboard summary: %w", err)
 	}
 
-	// 3. Overdue Tasks Count: activities with completed = false AND due_date < CURRENT_TIMESTAMP
-	var actWhereClauses []string
-	var actArgs []any
-	actArgIdx := 1
-
-	actWhereClauses = append(actWhereClauses, "a.completed = false", "a.due_date < CURRENT_TIMESTAMP", "l.deleted_at IS NULL")
-
-	if !scope.IsUnrestricted {
-		actWhereClauses = append(actWhereClauses, fmt.Sprintf("(l.assigned_to = ANY($%d) OR l.created_by = ANY($%d))", actArgIdx, actArgIdx))
-		actArgs = append(actArgs, scope.AllowedUserIDs)
-		actArgIdx++
-	}
-
-	if strings.TrimSpace(owner) != "" {
-		actWhereClauses = append(actWhereClauses, fmt.Sprintf("LOWER(l.owner) = LOWER($%d)", actArgIdx))
-		actArgs = append(actArgs, strings.TrimSpace(owner))
-		actArgIdx++
-	}
-	if strings.TrimSpace(region) != "" {
-		actWhereClauses = append(actWhereClauses, fmt.Sprintf("LOWER(l.region) = LOWER($%d)", actArgIdx))
-		actArgs = append(actArgs, strings.TrimSpace(region))
-		actArgIdx++
-	}
-
-	overdueQuery := fmt.Sprintf(`
-		SELECT COUNT(a.id)
-		FROM activities a
-		JOIN leads l ON a.lead_id = l.lead_id
-		WHERE %s
-	`, strings.Join(actWhereClauses, " AND "))
-
-	err = r.pool.QueryRow(ctx, overdueQuery, actArgs...).Scan(&data.OverdueCount)
-	if err != nil {
-		return nil, fmt.Errorf("analytics repo: query overdue tasks: %w", err)
-	}
-
-	// 4. Stage Distribution
-	stageQuery := fmt.Sprintf(`
-		SELECT COALESCE(stage, 'Prospecting') AS stage, COUNT(*), COALESCE(SUM(value), 0)
-		FROM leads
-		%s
-		GROUP BY stage
-	`, whereSQL)
-
-	stageRows, err := r.pool.Query(ctx, stageQuery, leadArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("analytics repo: query stage distribution: %w", err)
-	}
-	defer stageRows.Close()
+	var stgItems []stageItemJSON
+	var regItems []regionItemJSON
+	_ = json.Unmarshal(stgJSONBytes, &stgItems)
+	_ = json.Unmarshal(regJSONBytes, &regItems)
 
 	stageMap := make(map[string]struct {
 		count int64
 		value float64
 	})
-	for stageRows.Next() {
-		var stgName string
-		var count int64
-		var val float64
-		if err := stageRows.Scan(&stgName, &count, &val); err == nil {
-			stageMap[stgName] = struct {
-				count int64
-				value float64
-			}{count: count, value: val}
-		}
+	for _, item := range stgItems {
+		stageMap[item.Stage] = struct {
+			count int64
+			value float64
+		}{count: item.Count, value: item.Value}
+	}
+
+	regionMap := make(map[string]struct {
+		count int64
+		value float64
+	})
+	var totalRegionLeads int64
+	for _, item := range regItems {
+		regionMap[item.Region] = struct {
+			count int64
+			value float64
+		}{count: item.Count, value: item.Value}
+		totalRegionLeads += item.Count
 	}
 
 	// Canonical 8 stages and fills
@@ -189,38 +221,7 @@ func (r *analyticsRepository) GetDashboardSummary(ctx context.Context, scope hel
 		})
 	}
 
-	// 5. Region Distribution
-	regionQuery := fmt.Sprintf(`
-		SELECT COALESCE(region, 'Other') AS region, COUNT(*), COALESCE(SUM(value), 0)
-		FROM leads
-		%s
-		GROUP BY region
-	`, whereSQL)
-
-	regRows, err := r.pool.Query(ctx, regionQuery, leadArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("analytics repo: query region distribution: %w", err)
-	}
-	defer regRows.Close()
-
-	regionMap := make(map[string]struct {
-		count int64
-		value float64
-	})
-	var totalRegionLeads int64
-	for regRows.Next() {
-		var regName string
-		var count int64
-		var val float64
-		if err := regRows.Scan(&regName, &count, &val); err == nil {
-			regionMap[regName] = struct {
-				count int64
-				value float64
-			}{count: count, value: val}
-			totalRegionLeads += count
-		}
-	}
-
+	// Canonical 5 regions and fills
 	canonicalRegions := []struct {
 		name string
 		fill string
@@ -283,7 +284,7 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope hel
 		argIdx++
 	}
 
-	// Range filters for closed deals / revenue: use updated_at as closure date
+	// Current period date filter for revenue & conversion
 	var dateFilterSQL string
 	if dateFrom != nil {
 		dateFilterSQL += fmt.Sprintf(" AND updated_at >= $%d", argIdx)
@@ -296,55 +297,7 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope hel
 		argIdx++
 	}
 
-	whereBaseSQL := " WHERE " + strings.Join(leadWhere, " AND ")
-
-	// 2. Revenue, Total Won, and Average Sales Cycle for Won Leads
-	revQuery := fmt.Sprintf(`
-		SELECT
-			COALESCE(SUM(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN value ELSE 0 END), 0) AS total_revenue,
-			COUNT(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN 1 END) AS won_count,
-			COUNT(CASE WHEN (status = 'Lost' OR stage = 'Closed Lost') THEN 1 END) AS lost_count,
-			COALESCE(AVG(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN EXTRACT(EPOCH FROM (updated_at - created_at))/86400.0 ELSE NULL END), 0) AS avg_sales_cycle_days
-		FROM leads
-		%s %s
-	`, whereBaseSQL, dateFilterSQL)
-
-	err := r.pool.QueryRow(ctx, revQuery, leadArgs...).Scan(
-		&data.RevenueSummary.CurrentPeriodRevenue,
-		&data.ConversionAnalytics.WonCount,
-		&data.ConversionAnalytics.LostCount,
-		&data.ConversionAnalytics.AvgSalesCycleDays,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("analytics repo: query revenue & conversion: %w", err)
-	}
-
-	// 3. Lifetime Total Won Revenue
-	totalRevQuery := fmt.Sprintf(`
-		SELECT COALESCE(SUM(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN value ELSE 0 END), 0)
-		FROM leads
-		%s
-	`, whereBaseSQL)
-
-	// Lead args without date params
-	var baseArgsOnly []any
-	baseArgCount := 0
-	if !scope.IsUnrestricted {
-		baseArgsOnly = append(baseArgsOnly, scope.AllowedUserIDs)
-		baseArgCount++
-	}
-	if strings.TrimSpace(owner) != "" {
-		baseArgsOnly = append(baseArgsOnly, strings.TrimSpace(owner))
-		baseArgCount++
-	}
-	if strings.TrimSpace(region) != "" {
-		baseArgsOnly = append(baseArgsOnly, strings.TrimSpace(region))
-		baseArgCount++
-	}
-
-	_ = r.pool.QueryRow(ctx, totalRevQuery, baseArgsOnly...).Scan(&data.RevenueSummary.TotalRevenue)
-
-	// 4. Previous Period Revenue for Growth Calculation
+	// Previous period date filter for growth calculation
 	now := time.Now()
 	var prevFrom, prevTo time.Time
 	if dateFrom != nil && dateTo != nil {
@@ -352,20 +305,162 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope hel
 		prevTo = *dateFrom
 		prevFrom = dateFrom.Add(-duration)
 	} else {
-		// Default to previous month
 		currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		prevTo = currentMonthStart
 		prevFrom = currentMonthStart.AddDate(0, -1, 0)
 	}
+	prevDateFilterSQL := fmt.Sprintf("updated_at >= $%d AND updated_at < $%d", argIdx, argIdx+1)
+	leadArgs = append(leadArgs, prevFrom, prevTo)
+	argIdx += 2
 
-	prevRevQuery := fmt.Sprintf(`
-		SELECT COALESCE(SUM(value), 0)
-		FROM leads
-		%s AND (status = 'Won' OR stage = 'Closed Won') AND updated_at >= $%d AND updated_at < $%d
-	`, whereBaseSQL, baseArgCount+1, baseArgCount+2)
+	whereBaseSQL := strings.Join(leadWhere, " AND ")
 
-	prevArgs := append(baseArgsOnly, prevFrom, prevTo)
-	_ = r.pool.QueryRow(ctx, prevRevQuery, prevArgs...).Scan(&data.RevenueSummary.PreviousPeriodRevenue)
+	// Consolidated Single-Round-Trip Reports Query
+	reportsQuery := fmt.Sprintf(`
+		WITH filtered_leads AS (
+			SELECT id, lead_id, company, project_name, owner, stage, status, value, region, priority, created_at, updated_at, assigned_to, created_by, deleted_at
+			FROM leads
+			WHERE %s
+		),
+		lifetime_rev AS (
+			SELECT COALESCE(SUM(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN value ELSE 0 END), 0) AS total_revenue
+			FROM filtered_leads
+		),
+		current_period_rev AS (
+			SELECT
+				COALESCE(SUM(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN value ELSE 0 END), 0) AS current_period_revenue,
+				COUNT(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN 1 END) AS won_count,
+				COUNT(CASE WHEN (status = 'Lost' OR stage = 'Closed Lost') THEN 1 END) AS lost_count,
+				COALESCE(AVG(CASE WHEN (status = 'Won' OR stage = 'Closed Won') THEN EXTRACT(EPOCH FROM (updated_at - created_at))/86400.0 ELSE NULL END), 0) AS avg_sales_cycle_days
+			FROM filtered_leads
+			WHERE 1=1 %s
+		),
+		prev_period_rev AS (
+			SELECT COALESCE(SUM(value), 0) AS prev_revenue
+			FROM filtered_leads
+			WHERE (status = 'Won' OR stage = 'Closed Won') AND %s
+		),
+		stage_dist AS (
+			SELECT COALESCE(stage, 'Prospecting') AS stage, COUNT(*) AS count, COALESCE(SUM(value), 0) AS value
+			FROM filtered_leads
+			GROUP BY stage
+		),
+		region_dist AS (
+			SELECT COALESCE(region, 'Other') AS region, COUNT(*) AS count, COALESCE(SUM(value), 0) AS value
+			FROM filtered_leads
+			GROUP BY region
+		),
+		rep_perf AS (
+			SELECT
+				COALESCE(owner, 'Unassigned') AS owner,
+				COALESCE(SUM(CASE WHEN status = 'Won' OR stage = 'Closed Won' THEN value ELSE 0 END), 0) AS won,
+				COALESCE(SUM(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN value ELSE 0 END), 0) AS pipeline,
+				COALESCE(SUM(CASE WHEN status = 'Lost' OR stage = 'Closed Lost' THEN value ELSE 0 END), 0) AS lost,
+				COUNT(*) AS total_deals
+			FROM filtered_leads
+			WHERE owner IS NOT NULL AND owner != ''
+			GROUP BY owner
+			ORDER BY won DESC, pipeline DESC
+		),
+		act_dist AS (
+			SELECT COALESCE(a.type, 'Other') AS type, COUNT(a.id) AS count
+			FROM activities a
+			JOIN filtered_leads fl ON a.lead_id = fl.lead_id
+			GROUP BY a.type
+		),
+		pri_dist AS (
+			SELECT COALESCE(priority, 'Normal') AS priority, COUNT(*) AS count, COALESCE(SUM(value), 0) AS value
+			FROM filtered_leads
+			GROUP BY priority
+		)
+		SELECT
+			lr.total_revenue,
+			cpr.current_period_revenue,
+			cpr.won_count,
+			cpr.lost_count,
+			cpr.avg_sales_cycle_days,
+			ppr.prev_revenue,
+			COALESCE((SELECT json_agg(json_build_object('stage', sd.stage, 'count', sd.count, 'value', sd.value)) FROM stage_dist sd), '[]'::json) AS stage_json,
+			COALESCE((SELECT json_agg(json_build_object('region', rd.region, 'count', rd.count, 'value', rd.value)) FROM region_dist rd), '[]'::json) AS region_json,
+			COALESCE((SELECT json_agg(json_build_object('name', rp.owner, 'won', rp.won, 'pipeline', rp.pipeline, 'lost', rp.lost, 'total_deals', rp.total_deals) ORDER BY rp.won DESC, rp.pipeline DESC) FROM rep_perf rp), '[]'::json) AS rep_json,
+			COALESCE((SELECT json_agg(json_build_object('type', ad.type, 'count', ad.count)) FROM act_dist ad), '[]'::json) AS act_json,
+			COALESCE((SELECT json_agg(json_build_object('priority', pd.priority, 'count', pd.count, 'value', pd.value)) FROM pri_dist pd), '[]'::json) AS pri_json
+		FROM lifetime_rev lr
+		CROSS JOIN current_period_rev cpr
+		CROSS JOIN prev_period_rev ppr;
+	`, whereBaseSQL, dateFilterSQL, prevDateFilterSQL)
+
+	var rStgJSON, rRegJSON, rRepJSON, rActJSON, rPriJSON []byte
+	err := r.pool.QueryRow(ctx, reportsQuery, leadArgs...).Scan(
+		&data.RevenueSummary.TotalRevenue,
+		&data.RevenueSummary.CurrentPeriodRevenue,
+		&data.ConversionAnalytics.WonCount,
+		&data.ConversionAnalytics.LostCount,
+		&data.ConversionAnalytics.AvgSalesCycleDays,
+		&data.RevenueSummary.PreviousPeriodRevenue,
+		&rStgJSON,
+		&rRegJSON,
+		&rRepJSON,
+		&rActJSON,
+		&rPriJSON,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("analytics repo: query reports analytics: %w", err)
+	}
+
+	var rStgItems []stageItemJSON
+	var rRegItems []regionItemJSON
+	var rRepItems []repItemJSON
+	var rActItems []actItemJSON
+	var rPriItems []priItemJSON
+
+	_ = json.Unmarshal(rStgJSON, &rStgItems)
+	_ = json.Unmarshal(rRegJSON, &rRegItems)
+	_ = json.Unmarshal(rRepJSON, &rRepItems)
+	_ = json.Unmarshal(rActJSON, &rActItems)
+	_ = json.Unmarshal(rPriJSON, &rPriItems)
+
+	stageMap := make(map[string]struct {
+		count int64
+		value float64
+	})
+	for _, item := range rStgItems {
+		stageMap[item.Stage] = struct {
+			count int64
+			value float64
+		}{count: item.Count, value: item.Value}
+	}
+
+	regMap := make(map[string]struct {
+		count int64
+		value float64
+	})
+	var totalRegValue float64
+	for _, item := range rRegItems {
+		regMap[item.Region] = struct {
+			count int64
+			value float64
+		}{count: item.Count, value: item.Value}
+		totalRegValue += item.Value
+	}
+
+	typeMap := make(map[string]int64)
+	var totalActivities int64
+	for _, item := range rActItems {
+		typeMap[item.Type] = item.Count
+		totalActivities += item.Count
+	}
+
+	priMap := make(map[string]struct {
+		count int64
+		value float64
+	})
+	for _, item := range rPriItems {
+		priMap[item.Priority] = struct {
+			count int64
+			value float64
+		}{count: item.Count, value: item.Value}
+	}
 
 	// Calculate Growth % safely
 	if data.RevenueSummary.PreviousPeriodRevenue > 0 {
@@ -382,7 +477,7 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope hel
 		data.RevenueSummary.RevenueMomentumText = fmt.Sprintf("%.1f%% MoM", data.RevenueSummary.GrowthPercent)
 	}
 
-	// 5. Win Rate %
+	// Win Rate %
 	totalClosed := data.ConversionAnalytics.WonCount + data.ConversionAnalytics.LostCount
 	if totalClosed > 0 {
 		data.ConversionAnalytics.WinRatePercent = (float64(data.ConversionAnalytics.WonCount) / float64(totalClosed)) * 100
@@ -390,283 +485,139 @@ func (r *analyticsRepository) GetReportsAnalytics(ctx context.Context, scope hel
 		data.ConversionAnalytics.WinRatePercent = 0.0
 	}
 
-	// 6. Pipeline by Stage (values and counts)
-	stageQuery := fmt.Sprintf(`
-		SELECT COALESCE(stage, 'Prospecting') AS stage, COUNT(*), COALESCE(SUM(value), 0)
-		FROM leads
-		%s
-		GROUP BY stage
-	`, whereBaseSQL)
+	// Canonical 8 stages
+	canonicalStages := []struct {
+		name string
+		fill string
+	}{
+		{"Prospecting", "#93C5FD"},
+		{"Qualification", "#A7F3D0"},
+		{"Initial Discussion", "#99F6E4"},
+		{"Needs Analysis", "#FDE68A"},
+		{"Proposal", "#C7D2FE"},
+		{"Negotiation", "#FBCFE8"},
+		{"Closed Won", "#34D399"},
+		{"Closed Lost", "#F87171"},
+	}
 
-	stageRows, err := r.pool.Query(ctx, stageQuery, baseArgsOnly...)
-	if err == nil {
-		defer stageRows.Close()
-		stageMap := make(map[string]struct {
-			count int64
-			value float64
+	for _, cs := range canonicalStages {
+		stgData := stageMap[cs.name]
+		data.PipelineByStage = append(data.PipelineByStage, models.StageDistributionItem{
+			Name:  cs.name,
+			Deals: stgData.count,
+			Count: stgData.count,
+			Value: stgData.value,
+			Fill:  cs.fill,
 		})
-		for stageRows.Next() {
-			var stgName string
-			var count int64
-			var val float64
-			if err := stageRows.Scan(&stgName, &count, &val); err == nil {
-				stageMap[stgName] = struct {
-					count int64
-					value float64
-				}{count: count, value: val}
-			}
-		}
-
-		canonicalStages := []struct {
-			name string
-			fill string
-		}{
-			{"Prospecting", "#93C5FD"},
-			{"Qualification", "#A7F3D0"},
-			{"Initial Discussion", "#99F6E4"},
-			{"Needs Analysis", "#FDE68A"},
-			{"Proposal", "#C7D2FE"},
-			{"Negotiation", "#FBCFE8"},
-			{"Closed Won", "#34D399"},
-			{"Closed Lost", "#F87171"},
-		}
-
-		for _, cs := range canonicalStages {
-			stgData := stageMap[cs.name]
-			data.PipelineByStage = append(data.PipelineByStage, models.StageDistributionItem{
-				Name:  cs.name,
-				Deals: stgData.count,
-				Count: stgData.count,
-				Value: stgData.value,
-				Fill:  cs.fill,
-			})
-		}
 	}
 
-	// 7. Pipeline by Region
-	regQuery := fmt.Sprintf(`
-		SELECT COALESCE(region, 'Other') AS region, COUNT(*), COALESCE(SUM(value), 0)
-		FROM leads
-		%s
-		GROUP BY region
-	`, whereBaseSQL)
+	// Canonical 5 regions
+	canonicalRegions := []struct {
+		name string
+		fill string
+	}{
+		{"North America", "#1D4ED8"},
+		{"Europe", "#0EA5E9"},
+		{"Asia Pacific", "#14B8A6"},
+		{"LATAM", "#F59E0B"},
+		{"India", "#8B5CF6"},
+	}
 
-	regRows, err := r.pool.Query(ctx, regQuery, baseArgsOnly...)
-	if err == nil {
-		defer regRows.Close()
-		regMap := make(map[string]struct {
-			count int64
-			value float64
+	for _, cr := range canonicalRegions {
+		rData := regMap[cr.name]
+		percent := 0
+		if totalRegValue > 0 {
+			percent = int((rData.value / totalRegValue) * 100)
+		}
+		displayName := cr.name
+		if displayName == "Europe" {
+			displayName = "EMEA"
+		} else if displayName == "Asia Pacific" {
+			displayName = "APAC"
+		}
+		data.PipelineByRegion = append(data.PipelineByRegion, models.RegionDistributionItem{
+			Name:    displayName,
+			Count:   rData.count,
+			Value:   rData.value,
+			Percent: percent,
+			Fill:    cr.fill,
 		})
-		var totalRegValue float64
-		for regRows.Next() {
-			var regName string
-			var count int64
-			var val float64
-			if err := regRows.Scan(&regName, &count, &val); err == nil {
-				regMap[regName] = struct {
-					count int64
-					value float64
-				}{count: count, value: val}
-				totalRegValue += val
-			}
-		}
+	}
 
-		canonicalRegions := []struct {
-			name string
-			fill string
-		}{
-			{"North America", "#1D4ED8"},
-			{"Europe", "#0EA5E9"},
-			{"Asia Pacific", "#14B8A6"},
-			{"LATAM", "#F59E0B"},
-			{"India", "#8B5CF6"},
-		}
-
-		for _, cr := range canonicalRegions {
-			rData := regMap[cr.name]
-			percent := 0
-			if totalRegValue > 0 {
-				percent = int((rData.value / totalRegValue) * 100)
-			}
-			displayName := cr.name
-			if displayName == "Europe" {
-				displayName = "EMEA"
-			} else if displayName == "Asia Pacific" {
-				displayName = "APAC"
-			}
-			data.PipelineByRegion = append(data.PipelineByRegion, models.RegionDistributionItem{
-				Name:    displayName,
-				Count:   rData.count,
-				Value:   rData.value,
-				Percent: percent,
-				Fill:    cr.fill,
-			})
+	// Rep Performance
+	data.RepPerformance = make([]models.RepPerformanceItem, len(rRepItems))
+	for i, item := range rRepItems {
+		data.RepPerformance[i] = models.RepPerformanceItem{
+			Name:       item.Name,
+			Won:        item.Won,
+			Lost:       item.Lost,
+			Pipeline:   item.Pipeline,
+			TotalDeals: item.TotalDeals,
 		}
 	}
 
-	// 8. Sales Rep Performance
-	repQuery := fmt.Sprintf(`
-		SELECT
-			COALESCE(owner, 'Unassigned') AS owner,
-			COALESCE(SUM(CASE WHEN status = 'Won' OR stage = 'Closed Won' THEN value ELSE 0 END), 0) AS won,
-			COALESCE(SUM(CASE WHEN (status IS NULL OR status NOT IN ('Won', 'Lost')) AND (stage IS NULL OR stage NOT IN ('Closed Won', 'Closed Lost')) THEN value ELSE 0 END), 0) AS pipeline,
-			COALESCE(SUM(CASE WHEN status = 'Lost' OR stage = 'Closed Lost' THEN value ELSE 0 END), 0) AS lost,
-			COUNT(*) AS total_deals
-		FROM leads
-		%s AND owner IS NOT NULL AND owner != ''
-		GROUP BY owner
-		ORDER BY won DESC, pipeline DESC
-	`, whereBaseSQL)
+	// Activity Breakdown
+	categories := []struct {
+		name string
+		keys []string
+		fill string
+	}{
+		{"Calls", []string{"Call", "Calls", "Phone Call"}, "#10B981"},
+		{"Emails", []string{"Email", "Emails", "Email Sent"}, "#3B82F6"},
+		{"Meetings", []string{"Meeting", "Meetings"}, "#F59E0B"},
+		{"Demos", []string{"Demo", "Demos", "Product Demo"}, "#8B5CF6"},
+	}
 
-	repRows, err := r.pool.Query(ctx, repQuery, baseArgsOnly...)
-	if err == nil {
-		defer repRows.Close()
-		for repRows.Next() {
-			var item models.RepPerformanceItem
-			if err := repRows.Scan(&item.Name, &item.Won, &item.Pipeline, &item.Lost, &item.TotalDeals); err == nil {
-				data.RepPerformance = append(data.RepPerformance, item)
-			}
+	for _, cat := range categories {
+		var catCount int64
+		for _, k := range cat.keys {
+			catCount += typeMap[k]
 		}
-	}
-
-	// 9. Activity Breakdown
-	var actWhere []string
-	var actArgs []any
-	actArgNum := 1
-
-	actWhere = append(actWhere, "l.deleted_at IS NULL")
-
-	if !scope.IsUnrestricted {
-		actWhere = append(actWhere, fmt.Sprintf("(l.assigned_to = ANY($%d) OR l.created_by = ANY($%d))", actArgNum, actArgNum))
-		actArgs = append(actArgs, scope.AllowedUserIDs)
-		actArgNum++
-	}
-
-	if strings.TrimSpace(owner) != "" {
-		actWhere = append(actWhere, fmt.Sprintf("LOWER(l.owner) = LOWER($%d)", actArgNum))
-		actArgs = append(actArgs, strings.TrimSpace(owner))
-		actArgNum++
-	}
-	if strings.TrimSpace(region) != "" {
-		actWhere = append(actWhere, fmt.Sprintf("LOWER(l.region) = LOWER($%d)", actArgNum))
-		actArgs = append(actArgs, strings.TrimSpace(region))
-		actArgNum++
-	}
-
-	actQuery := fmt.Sprintf(`
-		SELECT COALESCE(a.type, 'Other') AS type, COUNT(a.id)
-		FROM activities a
-		JOIN leads l ON a.lead_id = l.lead_id
-		WHERE %s
-		GROUP BY a.type
-	`, strings.Join(actWhere, " AND "))
-
-	actRows, err := r.pool.Query(ctx, actQuery, actArgs...)
-	if err == nil {
-		defer actRows.Close()
-		var totalActivities int64
-		typeMap := make(map[string]int64)
-
-		for actRows.Next() {
-			var aType string
-			var count int64
-			if err := actRows.Scan(&aType, &count); err == nil {
-				typeMap[aType] = count
-				totalActivities += count
-			}
+		percent := 0
+		if totalActivities > 0 {
+			percent = int((float64(catCount) / float64(totalActivities)) * 100)
 		}
-
-		// Standard categories
-		categories := []struct {
-			name string
-			keys []string
-			fill string
-		}{
-			{"Calls", []string{"Call", "Calls", "Phone Call"}, "#10B981"},
-			{"Emails", []string{"Email", "Emails", "Email Sent"}, "#3B82F6"},
-			{"Meetings", []string{"Meeting", "Meetings"}, "#F59E0B"},
-			{"Demos", []string{"Demo", "Demos", "Product Demo"}, "#8B5CF6"},
-		}
-
-		for _, cat := range categories {
-			var catCount int64
-			for _, k := range cat.keys {
-				catCount += typeMap[k]
-			}
-			percent := 0
-			if totalActivities > 0 {
-				percent = int((float64(catCount) / float64(totalActivities)) * 100)
-			}
-			data.ActivityBreakdown = append(data.ActivityBreakdown, models.ActivityBreakdownItem{
-				Name:    cat.name,
-				Count:   catCount,
-				Percent: percent,
-				Fill:    cat.fill,
-			})
-		}
-	}
-
-	// 10. Priority Breakdown
-	priQuery := fmt.Sprintf(`
-		SELECT COALESCE(priority, 'Normal') AS priority, COUNT(*), COALESCE(SUM(value), 0)
-		FROM leads
-		%s
-		GROUP BY priority
-	`, whereBaseSQL)
-
-	priRows, err := r.pool.Query(ctx, priQuery, baseArgsOnly...)
-	if err == nil {
-		defer priRows.Close()
-		priMap := make(map[string]struct {
-			count int64
-			value float64
+		data.ActivityBreakdown = append(data.ActivityBreakdown, models.ActivityBreakdownItem{
+			Name:    cat.name,
+			Count:   catCount,
+			Percent: percent,
+			Fill:    cat.fill,
 		})
-		for priRows.Next() {
-			var pName string
-			var count int64
-			var val float64
-			if err := priRows.Scan(&pName, &count, &val); err == nil {
-				priMap[pName] = struct {
-					count int64
-					value float64
-				}{count: count, value: val}
-			}
+	}
+
+	// Priority Breakdown
+	priorityTiers := []struct {
+		tier         string
+		priorityKey  string
+		altKey       string
+		color        string
+		actionStatus string
+	}{
+		{"Critical", "Urgent", "Critical", "badge-danger", "Requires Daily Review"},
+		{"High", "High", "High", "badge-warning", "Weekly Follow-up"},
+		{"Medium", "Normal", "Medium", "badge-info", "Standard Cycle"},
+		{"Low", "Low", "Low", "badge-success", "Standard Cycle"},
+	}
+
+	for _, pt := range priorityTiers {
+		pData1 := priMap[pt.priorityKey]
+		pData2 := priMap[pt.altKey]
+		totalCount := pData1.count
+		totalVal := pData1.value
+		if pt.priorityKey != pt.altKey {
+			totalCount += pData2.count
+			totalVal += pData2.value
 		}
 
-		priorityTiers := []struct {
-			tier         string
-			priorityKey  string
-			altKey       string
-			color        string
-			actionStatus string
-		}{
-			{"Critical", "Urgent", "Critical", "badge-danger", "Requires Daily Review"},
-			{"High", "High", "High", "badge-warning", "Weekly Follow-up"},
-			{"Medium", "Normal", "Medium", "badge-info", "Standard Cycle"},
-			{"Low", "Low", "Low", "badge-success", "Standard Cycle"},
-		}
-
-		for _, pt := range priorityTiers {
-			pData1 := priMap[pt.priorityKey]
-			pData2 := priMap[pt.altKey]
-			totalCount := pData1.count
-			totalVal := pData1.value
-			if pt.priorityKey != pt.altKey {
-				totalCount += pData2.count
-				totalVal += pData2.value
-			}
-
-			data.PriorityBreakdown = append(data.PriorityBreakdown, models.PriorityBreakdownItem{
-				Tier:         pt.tier,
-				Priority:     pt.priorityKey,
-				Count:        totalCount,
-				Value:        fmt.Sprintf("$%.0f", totalVal),
-				NumericValue: totalVal,
-				Color:        pt.color,
-				ActionStatus: pt.actionStatus,
-			})
-		}
+		data.PriorityBreakdown = append(data.PriorityBreakdown, models.PriorityBreakdownItem{
+			Tier:         pt.tier,
+			Priority:     pt.priorityKey,
+			Count:        totalCount,
+			Value:        fmt.Sprintf("$%.0f", totalVal),
+			NumericValue: totalVal,
+			Color:        pt.color,
+			ActionStatus: pt.actionStatus,
+		})
 	}
 
 	return data, nil

@@ -431,8 +431,8 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 	}
 	_ = gormDB.Create(lead)
 
-	t.Run("Lazy Initialization & Lead Context Population", func(t *testing.T) {
-		// First access triggers lazy draft creation
+	t.Run("Read-Only Draft & Lead Context Population", func(t *testing.T) {
+		// First access returns read-only in-memory draft with blank estimation
 		resp, err := commService.GetCommercial(ctx, "L-7001", models.RoleSalesExecutive, "test_comm_sahil@pmrg.com", "USD")
 		if err != nil {
 			t.Fatalf("GetCommercial failed: %v", err)
@@ -447,12 +447,18 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 		if resp.CommercialEstimation.Currency != "USD" {
 			t.Errorf("Expected USD currency, got %s", resp.CommercialEstimation.Currency)
 		}
+		if len(resp.CommercialEstimation.Resources) != 0 {
+			t.Errorf("Expected 0 resources for unconfigured lead, got %d", len(resp.CommercialEstimation.Resources))
+		}
+		if len(resp.CommercialEstimation.Expenses) != 0 {
+			t.Errorf("Expected 0 expenses for unconfigured lead, got %d", len(resp.CommercialEstimation.Expenses))
+		}
 
-		// Ensure second call returns same record (1:1 uniqueness)
+		// Ensure read-only behavior: no records written to database on GET
 		var count int64
 		_ = gormDB.Model(&models.CommercialEstimation{}).Where("lead_id = ?", "L-7001").Count(&count)
-		if count != 1 {
-			t.Errorf("Expected exactly 1 commercial estimation for lead, got %d", count)
+		if count != 0 {
+			t.Errorf("Expected 0 commercial estimations written on read, got %d", count)
 		}
 	})
 

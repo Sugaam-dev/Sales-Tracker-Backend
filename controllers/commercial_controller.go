@@ -95,7 +95,7 @@ func (ctrl *CommercialController) UpdateCommercial(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "Validation failed",
-			"errors":  err.Error(),
+			"errors":  helpers.FormatValidationError(err),
 		})
 		return
 	}
