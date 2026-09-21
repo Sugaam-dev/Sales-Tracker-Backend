@@ -214,7 +214,7 @@ func (ac *LeadController) ListLeads(c *gin.Context) {
 	}
 
 	pageStr := c.DefaultQuery("page", "1")
-	limitStr := c.DefaultQuery("limit", "5")
+	limitStr := c.DefaultQuery("limit", "10")
 	search := c.Query("search")
 	owner := c.Query("owner")
 	priority := c.Query("priority")

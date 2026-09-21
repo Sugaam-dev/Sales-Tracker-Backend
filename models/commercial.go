@@ -13,9 +13,16 @@ const (
 	CommercialStatusRejected  = "REJECTED"
 
 	CurrencyUSD = "USD"
+	CurrencyINR = "INR"
 	CurrencyEUR = "EUR"
 	CurrencyGBP = "GBP"
-	CurrencyINR = "INR"
+	CurrencySAR = "SAR"
+	CurrencyAED = "AED"
+	CurrencyQAR = "QAR"
+	CurrencyKWD = "KWD"
+	CurrencyBHD = "BHD"
+	CurrencyOMR = "OMR"
+	CurrencyZAR = "ZAR"
 )
 
 // CommercialEstimation represents the 1:1 commercial estimation attached to a Lead.

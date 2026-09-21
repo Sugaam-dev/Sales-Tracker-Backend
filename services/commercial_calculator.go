@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"crm-auth-service/models"
@@ -13,9 +14,49 @@ import (
 // Fixed exchange rate matrix relative to base USD.
 var ExchangeRates = map[string]float64{
 	models.CurrencyUSD: 1.00,
+	models.CurrencyINR: 83.50,
 	models.CurrencyEUR: 0.92,
 	models.CurrencyGBP: 0.79,
-	models.CurrencyINR: 83.50,
+	models.CurrencySAR: 3.75,
+	models.CurrencyAED: 3.67,
+	models.CurrencyQAR: 3.64,
+	models.CurrencyKWD: 0.31,
+	models.CurrencyBHD: 0.38,
+	models.CurrencyOMR: 0.38,
+	models.CurrencyZAR: 18.50,
+}
+
+// GradeDailyCostsUSD maps standard grades to their authoritative base Daily Cost in USD.
+var GradeDailyCostsUSD = map[string]float64{
+	"L1":             100.00,
+	"L1 (Junior)":    100.00,
+	"L2":             150.00,
+	"L2 (Mid)":       150.00,
+	"L3":             200.00,
+	"L3 (Senior)":    200.00,
+	"L4":             250.00,
+	"L4 (Principal)": 250.00,
+}
+
+// GetGradeDailyCostUSD returns the base Daily Cost in USD for a given grade.
+func GetGradeDailyCostUSD(grade string) float64 {
+	trimmed := strings.TrimSpace(grade)
+	if cost, ok := GradeDailyCostsUSD[trimmed]; ok {
+		return cost
+	}
+	if strings.HasPrefix(trimmed, "L4") {
+		return 250.00
+	}
+	if strings.HasPrefix(trimmed, "L3") {
+		return 200.00
+	}
+	if strings.HasPrefix(trimmed, "L2") {
+		return 150.00
+	}
+	if strings.HasPrefix(trimmed, "L1") {
+		return 100.00
+	}
+	return 100.00
 }
 
 // IsValidCurrency checks if the currency is supported.
