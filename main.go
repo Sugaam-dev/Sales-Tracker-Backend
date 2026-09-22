@@ -45,15 +45,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Migrate Lead, Commercial, Task, and RBAC models
-	gormDB.AutoMigrate(
-		&models.Lead{}, &models.Activity{}, &models.LeadStage{},
-		&models.CommercialEstimation{}, &models.CommercialResource{},
-		&models.CommercialExpense{}, &models.SDLCAllocation{},
-		&models.User{}, &models.LeaderDelegation{},
-		&models.Task{},
-	)
-	gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
+	// Migrate Lead, Commercial, Task, and RBAC models asynchronously
+	go func() {
+		_ = gormDB.AutoMigrate(
+			&models.Lead{}, &models.Activity{}, &models.LeadStage{},
+			&models.CommercialEstimation{}, &models.CommercialResource{},
+			&models.CommercialExpense{}, &models.SDLCAllocation{},
+			&models.User{}, &models.LeaderDelegation{},
+			&models.Task{},
+		)
+		gormDB.Exec("CREATE SEQUENCE IF NOT EXISTS lead_id_seq START 1")
+	}()
 
 	// Dependency Injection: Repository data-access layer.
 	userRepo := repository.NewUserRepository(db)

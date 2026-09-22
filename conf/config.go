@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -437,9 +438,13 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)`,
 	}
 
-	for _, q := range queries {
-		if _, err := pool.Exec(ctx, q); err != nil {
-			return err
+	script := strings.Join(queries, ";\n")
+	if _, err := pool.Exec(ctx, script); err != nil {
+		// Fallback to sequential execution if a batch error occurs
+		for _, q := range queries {
+			if _, err := pool.Exec(ctx, q); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
