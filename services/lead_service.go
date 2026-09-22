@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"regexp"
@@ -50,13 +51,24 @@ type LeadService interface {
 type leadService struct {
 	leadRepo repository.LeadRepository
 	userRepo repository.UserRepository
+	emailSvc helpers.EmailService
+	log      *slog.Logger
 }
 
-func NewLeadService(leadRepo repository.LeadRepository, userRepo repository.UserRepository) LeadService {
+func NewLeadService(leadRepo repository.LeadRepository, userRepo repository.UserRepository, emailSvc helpers.EmailService, log *slog.Logger) LeadService {
 	return &leadService{
 		leadRepo: leadRepo,
 		userRepo: userRepo,
+		emailSvc: emailSvc,
+		log:      log,
 	}
+}
+
+func safeDerefString(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
 }
 
 // ---------------------------------------------
@@ -148,6 +160,24 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 	// 5. Phone & Country Code Validation
 	if err := helpers.ValidatePhoneNumber(req.Phone, req.CountryCode); err != nil {
 		return nil, helpers.ErrBadRequest(err.Error())
+	}
+	if req.OfficePhone != "" {
+		officeCC := req.OfficePhoneCountry
+		if officeCC == "" {
+			officeCC = req.CountryCode
+		}
+		if err := helpers.ValidatePhoneNumber(req.OfficePhone, officeCC); err != nil {
+			return nil, helpers.ErrBadRequest(err.Error())
+		}
+	}
+	if req.AlternatePhone != "" {
+		altCC := req.AlternatePhoneCountry
+		if altCC == "" {
+			altCC = req.CountryCode
+		}
+		if err := helpers.ValidatePhoneNumber(req.AlternatePhone, altCC); err != nil {
+			return nil, helpers.ErrBadRequest(err.Error())
+		}
 	}
 
 	if req.Stage != "" {
@@ -261,8 +291,9 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 		lead.LostReason = &req.LostReason
 	}
 	if req.Value != "" {
-		parsedVal, err := strconv.ParseFloat(req.Value, 64)
-		if err == nil {
+		cleanedVal := strings.ReplaceAll(req.Value, ",", "")
+		parsedVal, err := strconv.ParseFloat(cleanedVal, 64)
+		if err == nil && parsedVal >= 0 {
 			lead.Value = &parsedVal
 		}
 	}
@@ -352,6 +383,23 @@ func (s *leadService) CreateLead(ctx context.Context, callerID uuid.UUID, caller
 	err = s.leadRepo.CreateLead(lead)
 	if err != nil {
 		return nil, s.handleDBError(err)
+	}
+
+	if s.emailSvc != nil && lead.Email != nil && *lead.Email != "" {
+		toEmail := *lead.Email
+		leadName := safeDerefString(lead.Contact)
+		company := lead.Company
+		leadID := lead.LeadID
+		ownerName := safeDerefString(lead.Owner)
+		emailSvc := s.emailSvc
+		logger := s.log
+		go func() {
+			if err := emailSvc.SendLeadCreated(toEmail, leadName, company, leadID, ownerName); err != nil {
+				if logger != nil {
+					logger.Error("failed to send lead creation email", "lead_id", leadID, "error", err)
+				}
+			}
+		}()
 	}
 
 	resp := s.mapToResponse(lead)
@@ -463,12 +511,46 @@ func (s *leadService) UpdateLead(ctx context.Context, callerID uuid.UUID, caller
 		}
 	}
 
-	// Relaxed validation
-
-	if req.AlternatePhone != nil && *req.AlternatePhone != "" {
-		phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)
-		if !phoneRegex.MatchString(*req.AlternatePhone) {
-			return nil, ErrValidation
+	// Validate phone fields if updated
+	if req.Phone != nil && strings.TrimSpace(*req.Phone) != "" {
+		phoneCC := ""
+		if req.CountryCode != nil && *req.CountryCode != "" {
+			phoneCC = *req.CountryCode
+		} else if lead.PhoneCountry != nil {
+			phoneCC = *lead.PhoneCountry
+		}
+		if err := helpers.ValidatePhoneNumber(*req.Phone, phoneCC); err != nil {
+			return nil, helpers.ErrBadRequest(err.Error())
+		}
+	}
+	if req.OfficePhone != nil && strings.TrimSpace(*req.OfficePhone) != "" {
+		officeCC := ""
+		if req.OfficePhoneCountry != nil && *req.OfficePhoneCountry != "" {
+			officeCC = *req.OfficePhoneCountry
+		} else if lead.OfficePhoneCountry != nil {
+			officeCC = *lead.OfficePhoneCountry
+		} else if req.CountryCode != nil && *req.CountryCode != "" {
+			officeCC = *req.CountryCode
+		} else if lead.PhoneCountry != nil {
+			officeCC = *lead.PhoneCountry
+		}
+		if err := helpers.ValidatePhoneNumber(*req.OfficePhone, officeCC); err != nil {
+			return nil, helpers.ErrBadRequest(err.Error())
+		}
+	}
+	if req.AlternatePhone != nil && strings.TrimSpace(*req.AlternatePhone) != "" {
+		altCC := ""
+		if req.AlternatePhoneCountry != nil && *req.AlternatePhoneCountry != "" {
+			altCC = *req.AlternatePhoneCountry
+		} else if lead.AlternatePhoneCountry != nil {
+			altCC = *lead.AlternatePhoneCountry
+		} else if req.CountryCode != nil && *req.CountryCode != "" {
+			altCC = *req.CountryCode
+		} else if lead.PhoneCountry != nil {
+			altCC = *lead.PhoneCountry
+		}
+		if err := helpers.ValidatePhoneNumber(*req.AlternatePhone, altCC); err != nil {
+			return nil, helpers.ErrBadRequest(err.Error())
 		}
 	}
 
@@ -522,9 +604,14 @@ func (s *leadService) UpdateLead(ctx context.Context, callerID uuid.UUID, caller
 		updates["lost_reason"] = *req.LostReason
 	}
 	if req.Value != nil {
-		parsedVal, err := strconv.ParseFloat(*req.Value, 64)
-		if err == nil {
-			updates["value"] = parsedVal
+		cleanedVal := strings.ReplaceAll(*req.Value, ",", "")
+		if strings.TrimSpace(cleanedVal) == "" {
+			updates["value"] = nil
+		} else {
+			parsedVal, err := strconv.ParseFloat(cleanedVal, 64)
+			if err == nil && parsedVal >= 0 {
+				updates["value"] = parsedVal
+			}
 		}
 	}
 	if req.Company != nil {
@@ -670,6 +757,63 @@ func (s *leadService) UpdateLead(ctx context.Context, callerID uuid.UUID, caller
 		return nil, s.handleDBError(err)
 	}
 
+	if s.emailSvc != nil {
+		emailSvc := s.emailSvc
+		logger := s.log
+		userRepo := s.userRepo
+
+		// Lead assignment / reassignment trigger
+		if updatedLead.AssignedTo != nil && (lead.AssignedTo == nil || *lead.AssignedTo != *updatedLead.AssignedTo || (lead.Owner == nil || (updatedLead.Owner != nil && *lead.Owner != *updatedLead.Owner))) {
+			assignedID := *updatedLead.AssignedTo
+			leadIDStr := updatedLead.LeadID
+			companyStr := updatedLead.Company
+			go func() {
+				targetUser, err := userRepo.FindByID(context.Background(), assignedID)
+				if err == nil && targetUser != nil && targetUser.Email != "" {
+					if err := emailSvc.SendLeadAssigned(targetUser.Email, targetUser.Name, leadIDStr, companyStr, callerEmail); err != nil {
+						if logger != nil {
+							logger.Error("failed to send lead assignment email", "lead_id", leadIDStr, "error", err)
+						}
+					}
+				}
+			}()
+		}
+
+		// Status or Stage change trigger
+		oldStatus := safeDerefString(lead.Status)
+		newStatus := safeDerefString(updatedLead.Status)
+		oldStage := safeDerefString(lead.Stage)
+		newStage := safeDerefString(updatedLead.Stage)
+
+		if (oldStatus != "" && newStatus != "" && oldStatus != newStatus) || (oldStage != "" && newStage != "" && oldStage != newStage) {
+			leadIDStr := updatedLead.LeadID
+			companyStr := updatedLead.Company
+			contactEmail := safeDerefString(updatedLead.Email)
+			contactName := safeDerefString(updatedLead.Contact)
+			assignedID := updatedLead.AssignedTo
+
+			go func() {
+				if contactEmail != "" {
+					if err := emailSvc.SendLeadStatusChanged(contactEmail, contactName, leadIDStr, companyStr, oldStatus, newStatus, oldStage, newStage); err != nil {
+						if logger != nil {
+							logger.Error("failed to send lead status change email to contact", "lead_id", leadIDStr, "error", err)
+						}
+					}
+				}
+				if assignedID != nil {
+					targetUser, err := userRepo.FindByID(context.Background(), *assignedID)
+					if err == nil && targetUser != nil && targetUser.Email != "" && targetUser.Email != contactEmail {
+						if err := emailSvc.SendLeadStatusChanged(targetUser.Email, targetUser.Name, leadIDStr, companyStr, oldStatus, newStatus, oldStage, newStage); err != nil {
+							if logger != nil {
+								logger.Error("failed to send lead status change email to assigned user", "lead_id", leadIDStr, "error", err)
+							}
+						}
+					}
+				}
+			}()
+		}
+	}
+
 	resp := s.mapToResponse(updatedLead)
 	return &resp, nil
 }
@@ -724,12 +868,7 @@ func (s *leadService) GetLeadActivities(ctx context.Context, callerID uuid.UUID,
 // ---------------------------------------------
 
 func (s *leadService) GetCurrentUsers(ctx context.Context, callerID uuid.UUID, callerRole string) ([]models.ActiveUserResponse, error) {
-	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, callerID, callerRole)
-	if err != nil {
-		return nil, fmt.Errorf("service: resolve scope: %w", err)
-	}
-
-	users, err := s.userRepo.FindUsersScoped(ctx, scope)
+	users, err := s.userRepo.FindUsersByRoleScope(ctx, callerID, callerRole)
 	if err != nil {
 		return nil, fmt.Errorf("service: get current users: %w", err)
 	}
@@ -815,11 +954,62 @@ func (s *leadService) GetLead(ctx context.Context, callerID uuid.UUID, callerRol
 	return &res, nil
 }
 
+// StageProbabilityMap defines the stage-to-probability mapping (consistent with analytics repository)
+var StageProbabilityMap = map[string]float64{
+	"Prospecting":        0.10,
+	"Qualification":      0.20,
+	"Initial Discussion": 0.30,
+	"Needs Analysis":     0.35,
+	"Proposal":           0.50,
+	"Negotiation":        0.80,
+	"Closed Won":         1.00,
+	"Closed Lost":        0.00,
+}
+
+// CalculateStageProbability returns the probability based on stage and status.
+func CalculateStageProbability(stage, status string) float64 {
+	if status == "Lost" || stage == "Closed Lost" {
+		return 0.00
+	}
+	if status == "Won" || stage == "Closed Won" {
+		return 1.00
+	}
+	if prob, ok := StageProbabilityMap[stage]; ok {
+		return prob
+	}
+	switch status {
+	case "Open":
+		return 0.10
+	case "New":
+		return 0.20
+	case "Contacted":
+		return 0.30
+	case "Analysis":
+		return 0.35
+	case "Interested":
+		return 0.50
+	case "Negotiation":
+		return 0.80
+	default:
+		return 0.10
+	}
+}
+
 func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 	var valStr *string
-	if l.Value != nil {
-		val := fmt.Sprintf("%.0f", *l.Value)
+	var expectedValStr *string
+
+	if l.Value != nil && *l.Value > 0 {
+		effectiveDealVal := *l.Value
+		val := fmt.Sprintf("%.0f", effectiveDealVal)
 		valStr = &val
+
+		stageStr := safeDerefString(l.Stage)
+		statusStr := safeDerefString(l.Status)
+		prob := CalculateStageProbability(stageStr, statusStr)
+		expVal := effectiveDealVal * prob
+		expStr := fmt.Sprintf("%.0f", expVal)
+		expectedValStr = &expStr
 	}
 
 	var estReqDate *string
@@ -859,6 +1049,7 @@ func (s *leadService) mapToResponse(l *models.Lead) models.LeadResponse {
 		Sentiment:                l.Sentiment,
 		Priority:                 l.Priority,
 		Value:                    valStr,
+		ExpectedValue:            expectedValStr,
 		LostReason:               l.LostReason,
 		BestTime:                 l.BestTime,
 		LifecycleTemplate:        l.LifecycleTemplate,
@@ -920,6 +1111,41 @@ func (s *leadService) CreateActivity(ctx context.Context, callerID uuid.UUID, ca
 	err = s.leadRepo.CreateActivity(activity)
 	if err != nil {
 		return nil, s.handleDBError(err)
+	}
+
+	if s.emailSvc != nil {
+		emailSvc := s.emailSvc
+		logger := s.log
+		userRepo := s.userRepo
+		actType := req.Type
+		actDesc := req.Desc
+		actDueDate := req.DueDate
+		leadIDStr := lead.LeadID
+		companyStr := lead.Company
+		assignedID := lead.AssignedTo
+		contactEmail := safeDerefString(lead.Email)
+		contactName := safeDerefString(lead.Contact)
+
+		go func() {
+			recipients := make(map[string]string)
+			if assignedID != nil {
+				targetUser, err := userRepo.FindByID(context.Background(), *assignedID)
+				if err == nil && targetUser != nil && strings.TrimSpace(targetUser.Email) != "" {
+					recipients[strings.ToLower(strings.TrimSpace(targetUser.Email))] = targetUser.Name
+				}
+			}
+			if strings.TrimSpace(contactEmail) != "" {
+				recipients[strings.ToLower(strings.TrimSpace(contactEmail))] = contactName
+			}
+
+			for email, name := range recipients {
+				if err := emailSvc.SendActivityNotification(email, name, actType, actDesc, actDueDate, leadIDStr, companyStr); err != nil {
+					if logger != nil {
+						logger.Error("failed to send activity notification", "lead_id", leadIDStr, "to", email, "error", err)
+					}
+				}
+			}
+		}()
 	}
 
 	resp := models.ToActivityResponse(*activity)
@@ -1004,21 +1230,25 @@ func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, c
 			}
 		}
 
-		if len(item.Phone) != 10 {
-			errorsMap["phone"] = "Phone must contain exactly 10 digits"
-		} else {
-			numericRegex := regexp.MustCompile(`^[0-9]+$`)
-			if !numericRegex.MatchString(item.Phone) {
-				errorsMap["phone"] = "Phone must contain exactly 10 digits"
-			}
+		// Phone & Office Phone validation with international support
+		phoneCC := item.CountryCode
+		if phoneCC == "" {
+			phoneCC = item.OfficePhoneCountry
+		}
+		if phoneCC == "" {
+			phoneCC = "IN|+91"
+		}
+		if err := helpers.ValidatePhoneNumber(item.Phone, phoneCC); err != nil {
+			errorsMap["phone"] = err.Error()
 		}
 
-		if len(item.OfficePhone) != 10 {
-			errorsMap["officePhone"] = "Office phone must contain exactly 10 digits"
-		} else {
-			numericRegex := regexp.MustCompile(`^[0-9]+$`)
-			if !numericRegex.MatchString(item.OfficePhone) {
-				errorsMap["officePhone"] = "Office phone must contain exactly 10 digits"
+		if item.OfficePhone != "" {
+			officeCC := item.OfficePhoneCountry
+			if officeCC == "" {
+				officeCC = phoneCC
+			}
+			if err := helpers.ValidatePhoneNumber(item.OfficePhone, officeCC); err != nil {
+				errorsMap["officePhone"] = err.Error()
 			}
 		}
 
@@ -1096,9 +1326,12 @@ func (s *leadService) BulkCreateLeads(ctx context.Context, callerID uuid.UUID, c
 		}
 
 		if item.AlternatePhone != "" {
-			phoneRegex := regexp.MustCompile(`^[0-9]{10}$`)
-			if !phoneRegex.MatchString(item.AlternatePhone) {
-				errorsMap["alternatePhone"] = "Alternate phone must contain exactly 10 digits"
+			altCC := item.AlternatePhoneCountry
+			if altCC == "" {
+				altCC = phoneCC
+			}
+			if err := helpers.ValidatePhoneNumber(item.AlternatePhone, altCC); err != nil {
+				errorsMap["alternatePhone"] = err.Error()
 			}
 		}
 
@@ -1513,6 +1746,41 @@ func (s *leadService) LogActivity(ctx context.Context, userID uuid.UUID, userRol
 	err = s.leadRepo.CreateActivity(activity)
 	if err != nil {
 		return nil, s.handleDBError(err)
+	}
+
+	if s.emailSvc != nil {
+		emailSvc := s.emailSvc
+		logger := s.log
+		userRepo := s.userRepo
+		actType := normalizedType
+		actDesc := descTrimmed
+		actDueDate := req.DueDate
+		leadIDStr := lead.LeadID
+		companyStr := lead.Company
+		assignedID := lead.AssignedTo
+		contactEmail := safeDerefString(lead.Email)
+		contactName := safeDerefString(lead.Contact)
+
+		go func() {
+			recipients := make(map[string]string)
+			if assignedID != nil {
+				targetUser, err := userRepo.FindByID(context.Background(), *assignedID)
+				if err == nil && targetUser != nil && strings.TrimSpace(targetUser.Email) != "" {
+					recipients[strings.ToLower(strings.TrimSpace(targetUser.Email))] = targetUser.Name
+				}
+			}
+			if strings.TrimSpace(contactEmail) != "" {
+				recipients[strings.ToLower(strings.TrimSpace(contactEmail))] = contactName
+			}
+
+			for email, name := range recipients {
+				if err := emailSvc.SendActivityNotification(email, name, actType, actDesc, actDueDate, leadIDStr, companyStr); err != nil {
+					if logger != nil {
+						logger.Error("failed to send activity notification", "lead_id", leadIDStr, "to", email, "error", err)
+					}
+				}
+			}
+		}()
 	}
 
 	var userName *string

@@ -1,8 +1,12 @@
 package helpers
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/go-playground/validator/v10"
 )
 
 // IsEmailIdentifier checks if the login identifier contains an "@" symbol.
@@ -47,4 +51,34 @@ func ValidatePasswordStrength(pwd string) error {
 		return ErrBadRequest("Password must contain " + strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// FormatValidationError formats validation errors into a clean, human-readable string without exposing struct tags.
+func FormatValidationError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var ve validator.ValidationErrors
+	if errors.As(err, &ve) {
+		var msgs []string
+		for _, fe := range ve {
+			field := fe.Field()
+			switch fe.Tag() {
+			case "required":
+				msgs = append(msgs, fmt.Sprintf("%s is required", field))
+			case "email":
+				msgs = append(msgs, fmt.Sprintf("%s must be a valid email", field))
+			case "min":
+				msgs = append(msgs, fmt.Sprintf("%s must be at least %s characters", field, fe.Param()))
+			case "max":
+				msgs = append(msgs, fmt.Sprintf("%s must not exceed %s characters", field, fe.Param()))
+			default:
+				msgs = append(msgs, fmt.Sprintf("%s is invalid", field))
+			}
+		}
+		return strings.Join(msgs, ", ")
+	}
+
+	return "Invalid input data provided."
 }

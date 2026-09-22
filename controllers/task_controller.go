@@ -44,7 +44,7 @@ func (ctrl *TaskController) handleServiceError(c *gin.Context, err error) {
 		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed")
 	} else {
 		ctrl.log.Error("Task Controller Error", "err", err)
-		helpers.ErrorResponse(c, http.StatusInternalServerError, "Error: "+err.Error())
+		helpers.ErrorResponse(c, http.StatusInternalServerError, "Failed to process task.")
 	}
 }
 
@@ -57,7 +57,7 @@ func (ctrl *TaskController) CreateTask(c *gin.Context) {
 
 	var req models.CreateTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed: "+err.Error())
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Invalid task payload")
 		return
 	}
 
@@ -107,7 +107,7 @@ func (ctrl *TaskController) UpdateTaskStatus(c *gin.Context) {
 
 	var req models.UpdateTaskStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		helpers.ErrorResponse(c, http.StatusBadRequest, "Validation failed: "+err.Error())
+		helpers.ErrorResponse(c, http.StatusBadRequest, "Invalid task payload")
 		return
 	}
 

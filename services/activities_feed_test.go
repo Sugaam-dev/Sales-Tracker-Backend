@@ -41,7 +41,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(pool)
 	leadRepo := repository.NewLeadRepository(pool, gormDB)
-	leadService := NewLeadService(leadRepo, userRepo)
+	leadService := NewLeadService(leadRepo, userRepo, nil, nil)
 
 	// Seed test user
 	testUserUUID := uuid.New()

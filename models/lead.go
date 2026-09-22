@@ -108,6 +108,7 @@ type LeadResponse struct {
 	Sentiment                *string `json:"sentiment,omitempty"`
 	Priority                 *string `json:"priority,omitempty"`
 	Value                    *string `json:"value,omitempty"`
+	ExpectedValue            *string `json:"expectedValue,omitempty"`
 	LostReason               *string `json:"lostReason,omitempty"`
 	BestTime                 *string `json:"bestTime,omitempty"`
 	RequestDetails           *string `json:"requestDetails,omitempty"`

@@ -20,6 +20,8 @@ type Config struct {
 	JWT    JWTConfig
 	Rate   RateLimitConfig
 	SMTP   SMTPConfig
+	Email  EmailConfig
+	Azure  AzureConfig
 }
 
 // ServerConfig defines server environment and execution port.
@@ -73,6 +75,19 @@ type SMTPConfig struct {
 	Password string
 }
 
+// EmailConfig holds email provider selection and sender address.
+type EmailConfig struct {
+	Provider   string
+	MailSender string
+}
+
+// AzureConfig holds Azure Entra ID and Graph API credentials.
+type AzureConfig struct {
+	ClientID     string
+	TenantID     string
+	ClientSecret string
+}
+
 // LoadConfig reads configuration settings from the environment or a .env file.
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
@@ -107,6 +122,15 @@ func LoadConfig() (*Config, error) {
 			Username: getEnv("SMTP_USERNAME", ""),
 			Password: getEnv("SMTP_PASSWORD", ""),
 		},
+		Email: EmailConfig{
+			Provider:   getEnv("EMAIL_PROVIDER", "SMTP"),
+			MailSender: getEnv("MAIL_SENDER", ""),
+		},
+		Azure: AzureConfig{
+			ClientID:     getEnv("AZURE_CLIENT_ID", ""),
+			TenantID:     getEnv("AZURE_TENANT_ID", ""),
+			ClientSecret: getEnv("AZURE_CLIENT_SECRET", ""),
+		},
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -125,6 +149,29 @@ func (c *Config) validate() error {
 	if len(c.JWT.Secret) < 32 {
 		return fmt.Errorf("config: JWT_SECRET must be at least 32 characters")
 	}
+
+	providerUpper := getEnv("EMAIL_PROVIDER", "SMTP")
+	if providerUpper != "" {
+		providerUpper = fmt.Sprintf("%s", providerUpper)
+	}
+
+	if c.Email.Provider == "AZURE" || c.Email.Provider == "azure" {
+		c.Email.Provider = "AZURE"
+		if c.Azure.ClientID == "" || c.Azure.TenantID == "" || c.Azure.ClientSecret == "" {
+			return fmt.Errorf("config: AZURE_CLIENT_ID, AZURE_TENANT_ID, and AZURE_CLIENT_SECRET are required when EMAIL_PROVIDER=AZURE")
+		}
+		if c.Email.MailSender == "" {
+			return fmt.Errorf("config: MAIL_SENDER is required when EMAIL_PROVIDER=AZURE")
+		}
+	} else if c.Email.Provider == "SMTP" || c.Email.Provider == "smtp" || c.Email.Provider == "" {
+		c.Email.Provider = "SMTP"
+		if c.SMTP.Host != "" && c.SMTP.Username == "" {
+			return fmt.Errorf("config: SMTP_USERNAME is required when SMTP_HOST is configured")
+		}
+	} else {
+		return fmt.Errorf("config: invalid EMAIL_PROVIDER %q (must be SMTP or AZURE)", c.Email.Provider)
+	}
+
 	return nil
 }
 
@@ -149,7 +196,16 @@ func ConnectDB(cfg DBConfig, log *slog.Logger) (*pgxpool.Pool, error) {
 		"sslmode", cfg.SSLMode,
 	)
 
-	pool, err := pgxpool.New(ctx, cfg.DSN(cfg.Name))
+	poolCfg, err := pgxpool.ParseConfig(cfg.DSN(cfg.Name))
+	if err != nil {
+		return nil, fmt.Errorf("conf: parse dsn: %w", err)
+	}
+	poolCfg.MaxConns = 8
+	poolCfg.MinConns = 2
+	poolCfg.MaxConnIdleTime = 15 * time.Minute
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("conf: connect: %w", err)
 	}
@@ -436,6 +492,8 @@ func executeMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)`,
+		// Heat-map composite index for fast owner & stage aggregation
+		`CREATE INDEX IF NOT EXISTS idx_leads_deleted_owner_stage ON leads(deleted_at, owner, stage)`,
 	}
 
 	script := strings.Join(queries, ";\n")
