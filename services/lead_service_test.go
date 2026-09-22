@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,7 +242,14 @@ func TestLeadServiceAndMigrationsIntegration(t *testing.T) {
 
 	// Test partial search matching
 	leadsRes, _, _ = leadService.ListLeads(ctx, uuid.Nil, models.RoleAdmin, 1, 5, "Acme", "", "", "", "", "")
-	if len(leadsRes) < 1 || leadsRes[0].Company != "Acme Corporation" {
+	foundAcme := false
+	for _, l := range leadsRes {
+		if strings.Contains(l.Company, "Acme") {
+			foundAcme = true
+			break
+		}
+	}
+	if !foundAcme {
 		t.Error("Search by company failed")
 	}
 

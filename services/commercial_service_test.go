@@ -132,10 +132,73 @@ func TestCurrencyConversionAndPrecision(t *testing.T) {
 		t.Errorf("Expected INR 8350.00, got %f", inr)
 	}
 
+	sar := Convert(baseUSD, models.CurrencySAR)
+	if sar != 375.00 {
+		t.Errorf("Expected SAR 375.00, got %f", sar)
+	}
+
+	aed := Convert(baseUSD, models.CurrencyAED)
+	if aed != 367.00 {
+		t.Errorf("Expected AED 367.00, got %f", aed)
+	}
+
+	qar := Convert(baseUSD, models.CurrencyQAR)
+	if qar != 364.00 {
+		t.Errorf("Expected QAR 364.00, got %f", qar)
+	}
+
+	kwd := Convert(baseUSD, models.CurrencyKWD)
+	if kwd != 31.00 {
+		t.Errorf("Expected KWD 31.00, got %f", kwd)
+	}
+
+	bhd := Convert(baseUSD, models.CurrencyBHD)
+	if bhd != 38.00 {
+		t.Errorf("Expected BHD 38.00, got %f", bhd)
+	}
+
+	omr := Convert(baseUSD, models.CurrencyOMR)
+	if omr != 38.00 {
+		t.Errorf("Expected OMR 38.00, got %f", omr)
+	}
+
+	zar := Convert(baseUSD, models.CurrencyZAR)
+	if zar != 1850.00 {
+		t.Errorf("Expected ZAR 1850.00, got %f", zar)
+	}
+
 	// Conversion back to base USD
 	inrBack := ConvertToBaseUSD(8350.00, models.CurrencyINR)
 	if math.Abs(inrBack-100.00) > 0.01 {
 		t.Errorf("Expected INR 8350.00 back to USD 100.00, got %f", inrBack)
+	}
+
+	sarBack := ConvertToBaseUSD(375.00, models.CurrencySAR)
+	if math.Abs(sarBack-100.00) > 0.01 {
+		t.Errorf("Expected SAR 375.00 back to USD 100.00, got %f", sarBack)
+	}
+}
+
+func TestGradeDailyCostMapping(t *testing.T) {
+	testCases := []struct {
+		grade        string
+		expectedCost float64
+	}{
+		{"L1", 100.00},
+		{"L1 (Junior)", 100.00},
+		{"L2", 150.00},
+		{"L2 (Mid)", 150.00},
+		{"L3", 200.00},
+		{"L3 (Senior)", 200.00},
+		{"L4", 250.00},
+		{"L4 (Principal)", 250.00},
+	}
+
+	for _, tc := range testCases {
+		cost := GetGradeDailyCostUSD(tc.grade)
+		if cost != tc.expectedCost {
+			t.Errorf("Expected cost %f for grade %s, got %f", tc.expectedCost, tc.grade, cost)
+		}
 	}
 }
 
@@ -524,8 +587,8 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 			t.Errorf("Expected INR currency in response, got %s", resp.CommercialEstimation.Currency)
 		}
 
-		// Base Resource Cost = (20 + 80) * 500 = 50,000 USD -> 50,000 * 83.50 = 4,175,000 INR
-		expectedResCostINR := 50000.0 * 83.50
+		// Base Resource Cost = (20 + 80) * 200 = 20,000 USD -> 20,000 * 83.50 = 1,670,000 INR
+		expectedResCostINR := 20000.0 * 83.50
 		if resp.CommercialEstimation.FinancialSummary.TotalResourceCost != expectedResCostINR {
 			t.Errorf("Expected resource cost %f INR, got %f", expectedResCostINR, resp.CommercialEstimation.FinancialSummary.TotalResourceCost)
 		}
@@ -595,10 +658,10 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 			MarkupPercent:           floatPtr(20.0),
 			DiscountPercent:         floatPtr(5.0),
 			Resources: &[]models.CommercialResourceDTO{
-				{Role: "Senior Architect", Grade: "L3 (Senior)", OnsiteDays: 20, OffshoreDays: 40, DailyCost: 380, BillingRate: 650},
-				{Role: "Software Developer", Grade: "L1 (Junior)", OnsiteDays: 10, OffshoreDays: 120, DailyCost: 180, BillingRate: 300},
-				{Role: "QA Lead", Grade: "L2 (Mid)", OnsiteDays: 5, OffshoreDays: 60, DailyCost: 220, BillingRate: 380},
-				{Role: "Project Manager", Grade: "L3 (Senior)", OnsiteDays: 15, OffshoreDays: 30, DailyCost: 380, BillingRate: 580},
+				{Role: "Senior Architect", Grade: "L3 (Senior)", OnsiteDays: 20, OffshoreDays: 40, DailyCost: 200, BillingRate: 650},
+				{Role: "Software Developer", Grade: "L1 (Junior)", OnsiteDays: 10, OffshoreDays: 120, DailyCost: 100, BillingRate: 300},
+				{Role: "QA Lead", Grade: "L2 (Mid)", OnsiteDays: 5, OffshoreDays: 60, DailyCost: 150, BillingRate: 380},
+				{Role: "Project Manager", Grade: "L3 (Senior)", OnsiteDays: 15, OffshoreDays: 30, DailyCost: 200, BillingRate: 580},
 			},
 			Expenses: &[]models.CommercialExpenseDTO{
 				{ExpenseType: "Travel", Cost: 6500, Remarks: strPtr("Client site visits")},
@@ -621,35 +684,35 @@ func TestCommercialIntegrationLifecycle(t *testing.T) {
 		}
 
 		// Expected calculations:
-		// Resource Cost: 22800 + 23400 + 14300 + 17100 = 77,600
+		// Resource Cost: 12000 + 13000 + 9750 + 9000 = 43,750
 		// Resource Revenue: 39000 + 39000 + 24700 + 26100 = 128,800
 		// Total Expenses: 6500 + 8000 + 2400 + 1800 + 1500 + 1200 = 21,400
-		// Total Project Cost: 77,600 + 21,400 = 99,000
+		// Total Project Cost: 43,750 + 21,400 = 65,150
 		// Final Resource Revenue: 128,800 * (1 + 0.20 - 0.05) = 148,120
 		// Calculated Selling Price: 148,120 + 21,400 = 169,520
-		// Gross Profit: 169,520 - 99,000 = 70,520
-		// Margin %: (70,520 / 169,520) * 100 = 41.60%
-		// ROI %: (70,520 / 99,000) * 100 = 71.23%
-		if resp.CommercialEstimation.FinancialSummary.TotalResourceCost != 77600.00 {
-			t.Errorf("Expected TotalResourceCost 77600, got %f", resp.CommercialEstimation.FinancialSummary.TotalResourceCost)
+		// Gross Profit: 169,520 - 65,150 = 104,370
+		// Margin %: (104,370 / 169,520) * 100 = 61.57%
+		// ROI %: (104,370 / 65,150) * 100 = 160.20%
+		if resp.CommercialEstimation.FinancialSummary.TotalResourceCost != 43750.00 {
+			t.Errorf("Expected TotalResourceCost 43750, got %f", resp.CommercialEstimation.FinancialSummary.TotalResourceCost)
 		}
 		if resp.CommercialEstimation.FinancialSummary.TotalExpenses != 21400.00 {
 			t.Errorf("Expected TotalExpenses 21400, got %f", resp.CommercialEstimation.FinancialSummary.TotalExpenses)
 		}
-		if resp.CommercialEstimation.FinancialSummary.TotalProjectCost != 99000.00 {
-			t.Errorf("Expected TotalProjectCost 99000, got %f", resp.CommercialEstimation.FinancialSummary.TotalProjectCost)
+		if resp.CommercialEstimation.FinancialSummary.TotalProjectCost != 65150.00 {
+			t.Errorf("Expected TotalProjectCost 65150, got %f", resp.CommercialEstimation.FinancialSummary.TotalProjectCost)
 		}
 		if resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice != 169520.00 {
 			t.Errorf("Expected CalculatedSellingPrice 169520, got %f", resp.CommercialEstimation.FinancialSummary.CalculatedSellingPrice)
 		}
-		if resp.CommercialEstimation.FinancialSummary.GrossProfit != 70520.00 {
-			t.Errorf("Expected GrossProfit 70520, got %f", resp.CommercialEstimation.FinancialSummary.GrossProfit)
+		if resp.CommercialEstimation.FinancialSummary.GrossProfit != 104370.00 {
+			t.Errorf("Expected GrossProfit 104370, got %f", resp.CommercialEstimation.FinancialSummary.GrossProfit)
 		}
-		if resp.CommercialEstimation.FinancialSummary.MarginPercent != 41.60 {
-			t.Errorf("Expected MarginPercent 41.60, got %f", resp.CommercialEstimation.FinancialSummary.MarginPercent)
+		if resp.CommercialEstimation.FinancialSummary.MarginPercent != 61.57 {
+			t.Errorf("Expected MarginPercent 61.57, got %f", resp.CommercialEstimation.FinancialSummary.MarginPercent)
 		}
-		if resp.CommercialEstimation.FinancialSummary.ROIPercent != 71.23 {
-			t.Errorf("Expected ROIPercent 71.23, got %f", resp.CommercialEstimation.FinancialSummary.ROIPercent)
+		if resp.CommercialEstimation.FinancialSummary.ROIPercent != 160.20 {
+			t.Errorf("Expected ROIPercent 160.20, got %f", resp.CommercialEstimation.FinancialSummary.ROIPercent)
 		}
 	})
 

@@ -83,11 +83,18 @@ func (p *DocumentParser) ExtractLeadsFromDocument(fileBytes []byte, filename str
 		}
 	}
 
-	// 1. If explicit structured tables were extracted (e.g. from DOCX or markdown/pipe tables)
-	if len(tables) > 1 {
-		leads := p.parseTableRows(tables)
-		if len(leads) > 0 {
-			return leads, nil
+	// 1. If explicit structured tables were extracted (e.g. from DOCX)
+	if len(tables) > 0 {
+		// A. Try Horizontal Table Parser (e.g. multi-column headers on Row 0)
+		horizontalLeads := p.parseTableRows(tables)
+		if len(horizontalLeads) > 0 {
+			return horizontalLeads, nil
+		}
+
+		// B. Try Vertical 2-Column Key-Value Table Parser
+		verticalLeads := p.parseVerticalTable(tables)
+		if len(verticalLeads) > 0 {
+			return verticalLeads, nil
 		}
 	}
 
@@ -100,13 +107,13 @@ func (p *DocumentParser) ExtractLeadsFromDocument(fileBytes []byte, filename str
 		return nil, errors.New("The uploaded document does not contain readable lead data.")
 	}
 
-	// 3. Try parsing text-based tables (e.g. pipe '|' separated or tab separated or CSV lines in text)
+	// 3. Try parsing text-based horizontal tables (e.g. pipe '|' separated or tab separated)
 	textTableLeads := p.parseTextTable(trimmedText)
 	if len(textTableLeads) > 0 {
 		return textTableLeads, nil
 	}
 
-	// 4. Try parsing multi-lead / label-value blocks
+	// 4. Try parsing multi-lead / label-value blocks (supports "Key: Value" and alternating "Label \n Value")
 	labelValueLeads := p.parseLabelValueBlocks(trimmedText)
 	if len(labelValueLeads) > 0 {
 		return labelValueLeads, nil
@@ -325,7 +332,7 @@ func (p *DocumentParser) extractPrintableStrings(data []byte) string {
 
 var fieldAliases = map[string][]string{
 	"company": {
-		"company", "company_name", "company name", "organization", "organisation", "account", "client", "business name",
+		"company", "company_name", "company name", "organization", "organisation", "account", "client", "client company", "business name",
 	},
 	"contact": {
 		"contact", "contact_person", "contact person", "contact name", "name", "full name", "lead name", "person", "representative",
@@ -337,7 +344,7 @@ var fieldAliases = map[string][]string{
 		"email", "email_address", "email address", "e-mail", "mail", "contact email",
 	},
 	"phone": {
-		"phone", "phone_number", "phone number", "mobile", "mobile_number", "contact_number", "contact number", "tel", "cell",
+		"phone", "phone_number", "phone number", "mobile", "mobile_number", "contact_number", "contact number", "telephone", "tel", "cell",
 	},
 	"countryCode": {
 		"country", "country_code", "country code", "countrycode", "region_code", "dial code", "phone country",
@@ -355,7 +362,7 @@ var fieldAliases = map[string][]string{
 		"alternate_phone_country", "alternate phone country",
 	},
 	"owner": {
-		"owner", "lead_owner", "lead owner", "assigned_to", "assigned to", "sales rep", "sales executive", "rep",
+		"owner", "lead_owner", "lead owner", "assigned to", "assigned_to", "sales rep", "sales executive", "rep",
 	},
 	"kamName": {
 		"kam_name", "kam name", "kam", "key account manager", "account manager",
@@ -397,7 +404,7 @@ var fieldAliases = map[string][]string{
 		"request_details", "request details", "requestdetails", "requirement_details", "requirements", "requirement", "basic_requirements", "basic requirements", "scope", "description",
 	},
 	"estimatedRequirementDate": {
-		"estimated_requirement_date", "estimated requirement date", "est_requirement_date", "est requirement date", "target date", "deadline",
+		"estimated_requirement_date", "estimated requirement date", "est_requirement_date", "est requirement date", "est. requirement date", "estimated req. date", "estimated req date", "target date", "deadline",
 	},
 	"notes": {
 		"notes", "comments", "remarks", "additional info",
@@ -406,7 +413,7 @@ var fieldAliases = map[string][]string{
 
 func matchFieldAlias(rawHeader string) string {
 	cleaned := strings.ToLower(strings.TrimSpace(rawHeader))
-	cleaned = strings.Trim(cleaned, ":- \t\"'*#")
+	cleaned = strings.Trim(cleaned, ":- \t\"'*#.")
 	if cleaned == "" {
 		return ""
 	}
@@ -422,15 +429,16 @@ func matchFieldAlias(rawHeader string) string {
 }
 
 // -------------------------------------------------------------
-// Table Parser Logic (Format A)
+// Table Parsers (Horizontal Format A & Vertical 2-Column)
 // -------------------------------------------------------------
 
+// parseTableRows parses horizontal multi-column tables where row 0 contains headers.
 func (p *DocumentParser) parseTableRows(rows [][]string) []models.CreateLeadRequest {
 	if len(rows) < 2 {
 		return nil
 	}
 
-	// Find the header row
+	// Find the horizontal header row (requires >= 2 recognized column headers)
 	headerIdx := -1
 	var matchedColumns []string
 
@@ -444,7 +452,7 @@ func (p *DocumentParser) parseTableRows(rows [][]string) []models.CreateLeadRequ
 				matches++
 			}
 		}
-		// Require at least 2 recognized headers (e.g. Email and Name, or Company and Email)
+		// Require at least 2 recognized headers in this single row
 		if matches >= 2 && matches > len(matchedColumns) {
 			headerIdx = rIdx
 			matchedColumns = colMap
@@ -462,7 +470,6 @@ func (p *DocumentParser) parseTableRows(rows [][]string) []models.CreateLeadRequ
 			continue
 		}
 
-		// Check if row has non-empty content
 		hasContent := false
 		for _, c := range row {
 			if strings.TrimSpace(c) != "" {
@@ -488,6 +495,69 @@ func (p *DocumentParser) parseTableRows(rows [][]string) []models.CreateLeadRequ
 	}
 
 	return leads
+}
+
+// parseVerticalTable parses 2-column key-value tables where column 0 contains field labels and column 1 contains values.
+func (p *DocumentParser) parseVerticalTable(rows [][]string) []models.CreateLeadRequest {
+	if len(rows) < 2 {
+		return nil
+	}
+
+	var leads []models.CreateLeadRequest
+	fieldMap := make(map[string]string)
+	seenKeys := make(map[string]bool)
+	recognizedCount := 0
+
+	flushLead := func() {
+		if len(fieldMap) == 0 {
+			return
+		}
+		lead := p.buildLeadFromMap(fieldMap)
+		if lead.Email != "" || lead.Company != "" || lead.Contact != "" {
+			leads = append(leads, lead)
+		}
+		fieldMap = make(map[string]string)
+		seenKeys = make(map[string]bool)
+	}
+
+	for _, row := range rows {
+		if len(row) < 2 {
+			continue
+		}
+
+		label := strings.TrimSpace(row[0])
+		val := strings.TrimSpace(row[1])
+
+		// Handle table rows with extra empty/merged cells
+		if len(row) > 2 && val == "" {
+			for c := 2; c < len(row); c++ {
+				if strings.TrimSpace(row[c]) != "" {
+					val = strings.TrimSpace(row[c])
+					break
+				}
+			}
+		}
+
+		alias := matchFieldAlias(label)
+		if alias != "" {
+			recognizedCount++
+			// If we see a duplicate main key and we already have fields, flush current lead
+			if (alias == "company" || alias == "email" || alias == "contact") && seenKeys[alias] && len(fieldMap) >= 2 {
+				flushLead()
+			}
+			fieldMap[alias] = val
+			seenKeys[alias] = true
+		}
+	}
+
+	flushLead()
+
+	// Require at least 2 recognized field labels across the vertical table
+	if recognizedCount >= 2 && len(leads) > 0 {
+		return leads
+	}
+
+	return nil
 }
 
 func (p *DocumentParser) parseTextTable(text string) []models.CreateLeadRequest {
@@ -522,9 +592,15 @@ func (p *DocumentParser) parseTextTable(text string) []models.CreateLeadRequest 
 		}
 
 		if len(tableRows) >= 2 {
+			// Try horizontal table
 			leads := p.parseTableRows(tableRows)
 			if len(leads) > 0 {
 				return leads
+			}
+			// Try vertical 2-column table
+			verticalLeads := p.parseVerticalTable(tableRows)
+			if len(verticalLeads) > 0 {
+				return verticalLeads
 			}
 		}
 	}
@@ -533,84 +609,39 @@ func (p *DocumentParser) parseTextTable(text string) []models.CreateLeadRequest 
 }
 
 // -------------------------------------------------------------
-// Label/Value and Multi-Lead Blocks Parser (Format B & C)
+// Label/Value and Alternating Lines Parser (Format B, C, D)
 // -------------------------------------------------------------
 
 func (p *DocumentParser) parseLabelValueBlocks(text string) []models.CreateLeadRequest {
-	lines := strings.Split(text, "\n")
+	rawLines := strings.Split(text, "\n")
+	var lines []string
+	for _, l := range rawLines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
 
-	// Group into blocks delineated by headers like "Lead 1", "Lead #2", "---", or repeated key fields
-	var blocks [][]string
-	var currentBlock []string
+	if len(lines) == 0 {
+		return nil
+	}
 
 	leadBoundaryRegex := regexp.MustCompile(`(?i)^(?:lead|record|prospect)\s*(?:#|\d+|:|-)\s*\d+.*$|^[-=_*]{3,}$`)
 	keyValRegex := regexp.MustCompile(`^([^:\t]{2,35})[:\t]\s*(.+)$`)
 
-	seenKeysInBlock := make(map[string]bool)
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if len(currentBlock) > 0 {
-				// Empty line could be block separator
-				blocks = append(blocks, currentBlock)
-				currentBlock = []string{}
-				seenKeysInBlock = make(map[string]bool)
-			}
-			continue
-		}
-
-		if leadBoundaryRegex.MatchString(trimmed) {
-			if len(currentBlock) > 0 {
-				blocks = append(blocks, currentBlock)
-				currentBlock = []string{}
-				seenKeysInBlock = make(map[string]bool)
-			}
-			continue
-		}
-
-		matches := keyValRegex.FindStringSubmatch(trimmed)
-		if len(matches) == 3 {
-			key := strings.TrimSpace(matches[1])
-			mappedField := matchFieldAlias(key)
-			if mappedField != "" && (mappedField == "company" || mappedField == "email" || mappedField == "contact") {
-				if seenKeysInBlock[mappedField] && len(currentBlock) >= 2 {
-					// We started a new lead with duplicate main key
-					blocks = append(blocks, currentBlock)
-					currentBlock = []string{}
-					seenKeysInBlock = make(map[string]bool)
-				}
-				seenKeysInBlock[mappedField] = true
-			}
-		}
-
-		currentBlock = append(currentBlock, trimmed)
-	}
-
-	if len(currentBlock) > 0 {
-		blocks = append(blocks, currentBlock)
-	}
-
 	var leads []models.CreateLeadRequest
-	for _, block := range blocks {
-		fieldMap := make(map[string]string)
-		for _, line := range block {
-			matches := keyValRegex.FindStringSubmatch(line)
-			if len(matches) == 3 {
-				key := strings.TrimSpace(matches[1])
-				val := strings.TrimSpace(matches[2])
-				mappedField := matchFieldAlias(key)
-				if mappedField != "" && val != "" {
-					fieldMap[mappedField] = val
-				}
-			}
-		}
+	fieldMap := make(map[string]string)
+	seenKeys := make(map[string]bool)
 
-		// Also check if block has plain email or phone heuristics if not captured by key-value
+	flushLead := func() {
+		if len(fieldMap) == 0 {
+			return
+		}
+		// Fallback email heuristic if email wasn't explicitly paired
 		if fieldMap["email"] == "" {
 			emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
-			for _, line := range block {
-				if match := emailRegex.FindString(line); match != "" {
+			for _, v := range fieldMap {
+				if match := emailRegex.FindString(v); match != "" {
 					fieldMap["email"] = match
 					break
 				}
@@ -621,8 +652,68 @@ func (p *DocumentParser) parseLabelValueBlocks(text string) []models.CreateLeadR
 		if lead.Email != "" || lead.Company != "" || lead.Contact != "" {
 			leads = append(leads, lead)
 		}
+		fieldMap = make(map[string]string)
+		seenKeys = make(map[string]bool)
 	}
 
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+
+		// 1. Boundary check (e.g. "Lead 1", "---")
+		if leadBoundaryRegex.MatchString(line) {
+			flushLead()
+			continue
+		}
+
+		// 2. Check for single-line "Key: Value" or "Key \t Value"
+		if matches := keyValRegex.FindStringSubmatch(line); len(matches) == 3 {
+			key := strings.TrimSpace(matches[1])
+			val := strings.TrimSpace(matches[2])
+			mappedField := matchFieldAlias(key)
+			if mappedField != "" {
+				if seenKeys[mappedField] && len(fieldMap) >= 2 {
+					flushLead()
+				}
+				fieldMap[mappedField] = val
+				seenKeys[mappedField] = true
+				continue
+			}
+		}
+
+		// 3. Check for alternating line "Label \n Value"
+		mappedField := matchFieldAlias(line)
+		if mappedField != "" {
+			val := ""
+			// Lookahead to line i+1 for value
+			if i+1 < len(lines) {
+				nextLine := lines[i+1]
+				isNextBoundary := leadBoundaryRegex.MatchString(nextLine)
+				isNextLabel := matchFieldAlias(nextLine) != ""
+				isNextKeyVal := keyValRegex.MatchString(nextLine) && matchFieldAlias(keyValRegex.FindStringSubmatch(nextLine)[1]) != ""
+
+				if !isNextBoundary && !isNextLabel && !isNextKeyVal {
+					val = nextLine
+					i++ // Consume next line as value
+				}
+			}
+
+			if seenKeys[mappedField] && len(fieldMap) >= 2 {
+				flushLead()
+			}
+			fieldMap[mappedField] = val
+			seenKeys[mappedField] = true
+			continue
+		}
+
+		// 4. Standalone plain email heuristic if encountered
+		emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+		if emailRegex.MatchString(line) && fieldMap["email"] == "" {
+			fieldMap["email"] = line
+			seenKeys["email"] = true
+		}
+	}
+
+	flushLead()
 	return leads
 }
 
@@ -675,19 +766,13 @@ func (p *DocumentParser) buildLeadFromMap(m map[string]string) models.CreateLead
 	// Normalizing Request Type ("IT Product" or "IT Service")
 	if req.RequestType != "" {
 		lowerType := strings.ToLower(req.RequestType)
-		if strings.Contains(lowerType, "product") {
-			req.RequestType = "IT Product"
-		} else if strings.Contains(lowerType, "service") {
+		if strings.Contains(lowerType, "service") {
 			req.RequestType = "IT Service"
+		} else if strings.Contains(lowerType, "product") {
+			req.RequestType = "IT Product"
 		}
 	} else {
-		req.RequestType = "IT Product" // Sensible default
-	}
-
-	// Default Request Details if omitted
-	if req.RequestDetails == "" {
-		req.RequestDetails = "Lead imported from document. Requirements to be discussed during initial qualification."
-		req.BasicRequirements = req.RequestDetails
+		req.RequestType = "IT Product"
 	}
 
 	// Default Status, Stage, Priority, Sentiment

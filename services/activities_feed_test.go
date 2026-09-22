@@ -58,13 +58,13 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 	// Seed test lead
 	p := time.Now().UnixNano()
 	testLead := models.Lead{
-		LeadID:                   fmt.Sprintf("L-ACT-%d", p%10000),
 		Company:                  fmt.Sprintf("Activities Test Corp %d", p),
 		Contact:                  strPtr("Test Contact"),
 		Email:                    strPtr(fmt.Sprintf("act_lead_%d@example.com", p)),
 		Phone:                    strPtr("9876543210"),
-		Owner:                    strPtr(testUser.Name),
-		AssignedTo:               &testUserUUID,
+		Owner:                    strPtr(testUser.Email),
+		AssignedTo:               &testUser.ID,
+		CreatedBy:                &testUser.ID,
 		Stage:                    strPtr("Prospecting"),
 		Status:                   strPtr("Open"),
 		Sentiment:                strPtr("Positive"),
@@ -75,7 +75,7 @@ func TestActivitiesFeedAndSummaryAPIs(t *testing.T) {
 		RequestType:              strPtr("IT Product"),
 		RequestDetails:           strPtr("We require a comprehensive CRM solution for our sales team with full lead lifecycle and activities management word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"),
 	}
-	_ = gormDB.Create(&testLead).Error
+	_ = leadRepo.CreateLead(&testLead)
 
 	t.Run("API-18: POST /api/v1/activities - Lead Resolution & Logging", func(t *testing.T) {
 		// 1. Create activity using leadId

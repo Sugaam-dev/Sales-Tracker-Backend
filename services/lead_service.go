@@ -1680,16 +1680,48 @@ func (s *leadService) LogActivity(ctx context.Context, userID uuid.UUID, userRol
 
 	if leadIDTrimmed != "" {
 		lead, err = s.leadRepo.GetLeadByLeadID(leadIDTrimmed)
-		if err != nil {
-			return nil, helpers.ErrNotFound
+		if err != nil && leadNameTrimmed != "" {
+			lead, _ = s.leadRepo.FindLeadByCompanyOrContact(ctx, leadNameTrimmed)
 		}
 	} else if leadNameTrimmed != "" {
 		lead, err = s.leadRepo.FindLeadByCompanyOrContact(ctx, leadNameTrimmed)
-		if err != nil {
-			return nil, helpers.ErrNotFound
-		}
 	} else {
 		return nil, helpers.ErrBadRequest("leadId or lead is required")
+	}
+
+	if lead == nil {
+		if leadNameTrimmed != "" {
+			// Auto-create lead on the fly for custom/unlisted client
+			autoLeadID := fmt.Sprintf("L-%d", time.Now().UnixNano()%10000000)
+			defaultStage := "Prospecting"
+			defaultStatus := "Open"
+			defaultPriority := "Medium"
+			defaultReqType := "IT Product"
+			defaultReqDetails := "Direct client activity logged via Activities Hub automation"
+			
+			ownerVal := userEmail
+			if ownerVal == "" {
+				ownerVal = "Admin"
+			}
+
+			newLead := &models.Lead{
+				LeadID:         autoLeadID,
+				Company:        leadNameTrimmed,
+				Contact:        &leadNameTrimmed,
+				Owner:          &ownerVal,
+				Stage:          &defaultStage,
+				Status:         &defaultStatus,
+				Priority:       &defaultPriority,
+				RequestType:    &defaultReqType,
+				RequestDetails: &defaultReqDetails,
+			}
+			if err := s.leadRepo.CreateLead(newLead); err != nil {
+				return nil, helpers.ErrNotFound
+			}
+			lead = newLead
+		} else {
+			return nil, helpers.ErrNotFound
+		}
 	}
 
 	scope, err := middleware.ResolveDataScope(ctx, s.userRepo, userID, userRole)

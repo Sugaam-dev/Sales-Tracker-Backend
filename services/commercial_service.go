@@ -87,7 +87,7 @@ func (s *commercialService) resolveTargetCurrency(param string, estimateCurrency
 		target = models.CurrencyUSD
 	}
 	if !IsValidCurrency(target) {
-		return "", errors.New("invalid currency, must be one of USD, EUR, GBP, INR")
+		return "", errors.New("invalid currency, must be one of USD, INR, EUR, GBP, SAR, AED, QAR, KWD, BHD, OMR, ZAR")
 	}
 	return target, nil
 }
@@ -96,7 +96,11 @@ func (s *commercialService) mapToDetailsDTO(est *models.CommercialEstimation, ta
 	resourcesDTO := make([]models.CommercialResourceDTO, len(est.Resources))
 	for i, r := range est.Resources {
 		days := r.OnsiteDays + r.OffshoreDays
-		baseCost := float64(days) * r.DailyCost
+		dailyCostUSD := r.DailyCost
+		if dailyCostUSD <= 0 {
+			dailyCostUSD = GetGradeDailyCostUSD(r.Grade)
+		}
+		baseCost := float64(days) * dailyCostUSD
 		baseRev := float64(days) * r.BillingRate
 
 		resID := r.ID
@@ -106,7 +110,7 @@ func (s *commercialService) mapToDetailsDTO(est *models.CommercialEstimation, ta
 			Grade:        r.Grade,
 			OnsiteDays:   r.OnsiteDays,
 			OffshoreDays: r.OffshoreDays,
-			DailyCost:    Convert(r.DailyCost, targetCurrency),
+			DailyCost:    Convert(dailyCostUSD, targetCurrency),
 			BillingRate:  Convert(r.BillingRate, targetCurrency),
 			TotalDays:    days,
 			TotalCost:    Convert(baseCost, targetCurrency),
@@ -366,8 +370,8 @@ func (s *commercialService) UpdateCommercial(
 				return nil, ErrValidation
 			}
 
-			// Convert input cost/rate from active currency to Base USD for storage
-			dailyCostUSD := ConvertToBaseUSD(r.DailyCost, currency)
+			// Derive canonical daily cost in USD based on Grade
+			dailyCostUSD := GetGradeDailyCostUSD(r.Grade)
 			billingRateUSD := ConvertToBaseUSD(r.BillingRate, currency)
 			days := float64(r.OnsiteDays + r.OffshoreDays)
 			totalCostUSD := Round2(days * dailyCostUSD)

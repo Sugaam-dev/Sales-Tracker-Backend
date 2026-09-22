@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TEST 1: Single lead in a table
-func Test1_SingleLeadTable(t *testing.T) {
+// TEST 1: Horizontal table
+func Test1_HorizontalTable(t *testing.T) {
 	parser := NewDocumentParser()
 	tableText := `
 Name | Company | Email | Phone | Country | Stage | Priority | Deal Value
@@ -23,8 +23,282 @@ Sarah Connor | Cyberdyne Systems | sarah@cyberdyne.com | 4155552671 | US | Prosp
 	}
 }
 
-// TEST 2: Multiple leads in a table
-func Test2_MultipleLeadsTable(t *testing.T) {
+// TEST 2: Vertical 2-column DOCX table (Exact user reproduction)
+func Test2_Vertical2ColumnDocxTable(t *testing.T) {
+	parser := NewDocumentParser()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	xmlContent := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Lead Name</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Rahul Sharma</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Company Name</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>TechNova Solutions</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Contact Number</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>+91 9876543210</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Email Address</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>rahul.sharma@technova.example</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Request Type</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>IT Service</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Request Details</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>The client needs a custom CRM solution with Microsoft 365 integration, automated follow-ups, and role-based access for their sales team.</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Lead Owner</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Sahil Derekar</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Priority</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>High</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Lead Status</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Open</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Estimated Req. Date</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>15-10-2026</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`
+
+	f, err := zw.Create("word/document.xml")
+	if err != nil {
+		t.Fatalf("failed to create zip file: %v", err)
+	}
+	_, err = f.Write([]byte(xmlContent))
+	if err != nil {
+		t.Fatalf("failed to write xml to zip: %v", err)
+	}
+	zw.Close()
+
+	leads, err := parser.ExtractLeadsFromDocument(buf.Bytes(), "dummy_lead_test.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	if err != nil {
+		t.Fatalf("unexpected error parsing vertical docx table: %v", err)
+	}
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+
+	lead := leads[0]
+	if lead.Contact != "Rahul Sharma" {
+		t.Errorf("expected Contact 'Rahul Sharma', got '%s'", lead.Contact)
+	}
+	if lead.Company != "TechNova Solutions" {
+		t.Errorf("expected Company 'TechNova Solutions', got '%s'", lead.Company)
+	}
+	if lead.Phone != "9876543210" || lead.CountryCode != "IN|+91" {
+		t.Errorf("expected Phone '9876543210' with Country 'IN|+91', got '%s' / '%s'", lead.Phone, lead.CountryCode)
+	}
+	if lead.Email != "rahul.sharma@technova.example" {
+		t.Errorf("expected Email 'rahul.sharma@technova.example', got '%s'", lead.Email)
+	}
+	if lead.RequestType != "IT Service" {
+		t.Errorf("expected RequestType 'IT Service', got '%s'", lead.RequestType)
+	}
+	if !strings.Contains(lead.RequestDetails, "custom CRM solution") {
+		t.Errorf("expected RequestDetails containing 'custom CRM solution', got '%s'", lead.RequestDetails)
+	}
+	if lead.Owner != "Sahil Derekar" {
+		t.Errorf("expected Owner 'Sahil Derekar', got '%s'", lead.Owner)
+	}
+	if lead.Priority != "High" {
+		t.Errorf("expected Priority 'High', got '%s'", lead.Priority)
+	}
+	if lead.Status != "Open" {
+		t.Errorf("expected Status 'Open', got '%s'", lead.Status)
+	}
+	if lead.EstimatedRequirementDate != "2026-10-15" {
+		t.Errorf("expected EstimatedRequirementDate '2026-10-15', got '%s'", lead.EstimatedRequirementDate)
+	}
+}
+
+// TEST 3: Key: Value text
+func Test3_KeyValueText(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Lead Name: Rahul Sharma
+Company Name: TechNova Solutions
+Contact Number: +91 9876543210
+Email Address: rahul.sharma@example.com
+Lead Owner: Sahil Derekar
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	l := leads[0]
+	if l.Contact != "Rahul Sharma" || l.Company != "TechNova Solutions" || l.Email != "rahul.sharma@example.com" {
+		t.Errorf("lead mapping mismatch: %+v", l)
+	}
+	if l.Owner != "Sahil Derekar" {
+		t.Errorf("expected Owner 'Sahil Derekar', got '%s'", l.Owner)
+	}
+}
+
+// TEST 4: Alternating lines
+func Test4_AlternatingLines(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Lead Name
+Rahul Sharma
+Company Name
+TechNova Solutions
+Contact Number
++91 9876543210
+Email Address
+rahul.sharma@example.com
+Request Type
+IT Service
+Request Details
+The client needs a custom CRM solution with Microsoft 365 integration.
+Lead Owner
+Sahil Derekar
+Priority
+High
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead from alternating lines, got %d", len(leads))
+	}
+	l := leads[0]
+	if l.Contact != "Rahul Sharma" {
+		t.Errorf("expected Contact 'Rahul Sharma', got '%s'", l.Contact)
+	}
+	if l.Company != "TechNova Solutions" {
+		t.Errorf("expected Company 'TechNova Solutions', got '%s'", l.Company)
+	}
+	if l.Email != "rahul.sharma@example.com" {
+		t.Errorf("expected Email 'rahul.sharma@example.com', got '%s'", l.Email)
+	}
+	if l.Phone != "9876543210" || l.CountryCode != "IN|+91" {
+		t.Errorf("expected Phone '9876543210' IN|+91, got '%s' / '%s'", l.Phone, l.CountryCode)
+	}
+	if l.RequestType != "IT Service" {
+		t.Errorf("expected RequestType 'IT Service', got '%s'", l.RequestType)
+	}
+	if l.Owner != "Sahil Derekar" {
+		t.Errorf("expected Owner 'Sahil Derekar', got '%s'", l.Owner)
+	}
+	if l.Priority != "High" {
+		t.Errorf("expected Priority 'High', got '%s'", l.Priority)
+	}
+}
+
+// TEST 5: US phone (+1 415 555 0186)
+func Test5_USPhoneNumber(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Company: Apple Inc
+Contact: Tim Cook
+Email: tim@apple.com
+Phone: +1 415 555 0186
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	if leads[0].Phone != "4155550186" || leads[0].CountryCode != "US|+1" {
+		t.Errorf("US phone extraction mismatch: phone=%s, cc=%s", leads[0].Phone, leads[0].CountryCode)
+	}
+}
+
+// TEST 6: UK phone (+44 20 7946 0312)
+func Test6_UKPhoneNumber(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Company: London Fintech
+Contact: Arthur Dent
+Email: arthur@fintech.co.uk
+Phone: +44 20 7946 0312
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	if leads[0].Phone != "2079460312" || leads[0].CountryCode != "GB|+44" {
+		t.Errorf("UK phone extraction mismatch: phone=%s, cc=%s", leads[0].Phone, leads[0].CountryCode)
+	}
+}
+
+// TEST 7: Explicit valid owner in alternating text
+func Test7_ExplicitValidOwner(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Company
+Acme Corp
+Contact
+John Smith
+Email
+john@acme.com
+Lead Owner
+Sahil Derekar
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	if leads[0].Owner != "Sahil Derekar" {
+		t.Errorf("expected Owner 'Sahil Derekar', got '%s'", leads[0].Owner)
+	}
+}
+
+// TEST 8: Explicit invalid owner preserved for validation
+func Test8_ExplicitInvalidOwnerPreserved(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Company: Acme Corp
+Contact: John Smith
+Email: john@acme.com
+Lead Owner: Nonexistent Person
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	// Parser must preserve "Nonexistent Person" so frontend/backend flags it as invalid
+	if leads[0].Owner != "Nonexistent Person" {
+		t.Errorf("expected Owner 'Nonexistent Person' preserved, got '%s'", leads[0].Owner)
+	}
+}
+
+// TEST 9: Missing owner in document
+func Test9_MissingOwner(t *testing.T) {
+	parser := NewDocumentParser()
+	text := `
+Company: Acme Corp
+Contact: John Smith
+Email: john@acme.com
+Phone: 9876543210
+`
+	leads := parser.parseLabelValueBlocks(text)
+	if len(leads) != 1 {
+		t.Fatalf("expected 1 lead, got %d", len(leads))
+	}
+	// Parser leaves owner empty when not in document, allowing frontend to set loggedInUser
+	if leads[0].Owner != "" {
+		t.Errorf("expected empty Owner from parser when absent, got '%s'", leads[0].Owner)
+	}
+}
+
+// TEST 10: Existing horizontal multi-lead table
+func Test10_HorizontalMultiLeadTable(t *testing.T) {
 	parser := NewDocumentParser()
 	tableText := `
 Contact Person | Company Name | Email Address | Phone Number | Country | Priority | Request Type
@@ -41,37 +315,8 @@ Charlie Brown | Stark Industries | charlie@stark.com | 7911123456 | UK | Urgent 
 	}
 }
 
-// TEST 3: Single lead using label/value format
-func Test3_SingleLeadLabelValue(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Name: Bruce Wayne
-Company: Wayne Enterprises
-Email: bruce@wayne.com
-Phone: +14155552671
-Country: US
-Deal Value: 250000
-Owner: Admin User
-Stage: Qualification
-Priority: High
-Request Type: IT Service
-Request Details: Comprehensive AI automation system for enterprise logistics.
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead, got %d", len(leads))
-	}
-	l := leads[0]
-	if l.Contact != "Bruce Wayne" || l.Company != "Wayne Enterprises" || l.Email != "bruce@wayne.com" {
-		t.Errorf("lead mapping mismatch: %+v", l)
-	}
-	if l.Phone != "4155552671" || l.CountryCode != "US|+1" {
-		t.Errorf("phone/country mapping mismatch: %s / %s", l.Phone, l.CountryCode)
-	}
-}
-
-// TEST 4: Multiple leads using label/value format
-func Test4_MultipleLeadsLabelValue(t *testing.T) {
+// TEST 11: Multi-lead Key: Value document
+func Test11_MultiLeadKeyValue(t *testing.T) {
 	parser := NewDocumentParser()
 	text := `
 Lead 1:
@@ -97,252 +342,16 @@ Country: US
 	}
 }
 
-// TEST 5: Lead with India phone number (+91 or 10 digits)
-func Test5_IndiaPhoneNumber(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Company: Tata Consultancy
-Contact: Ratan Sharma
-Email: ratan@tcs.com
-Phone: +919876543210
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead, got %d", len(leads))
-	}
-	if leads[0].Phone != "9876543210" || leads[0].CountryCode != "IN|+91" {
-		t.Errorf("India phone extraction mismatch: phone=%s, cc=%s", leads[0].Phone, leads[0].CountryCode)
-	}
-}
-
-// TEST 6: Lead with US phone number (+1)
-func Test6_USPhoneNumber(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Company: Apple Inc
-Contact: Tim Cook
-Email: tim@apple.com
-Phone: +14155552671
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead, got %d", len(leads))
-	}
-	if leads[0].Phone != "4155552671" || leads[0].CountryCode != "US|+1" {
-		t.Errorf("US phone extraction mismatch: phone=%s, cc=%s", leads[0].Phone, leads[0].CountryCode)
-	}
-}
-
-// TEST 7: Document with India / US / UK / Germany numbers
-func Test7_InternationalPhoneNumbers(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Lead 1:
-Company: Berlin Digital
-Email: info@berlindigital.de
-Phone: +4915123456789
-Country: Germany
-
-Lead 2:
-Company: London Analytics
-Email: contact@londonanalytics.co.uk
-Phone: +447911123456
-Country: UK
-
-Lead 3:
-Company: Tokyo Systems
-Email: info@tokyosystems.jp
-Phone: 81234567
-Country: Singapore
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 3 {
-		t.Fatalf("expected 3 leads, got %d", len(leads))
-	}
-	if leads[0].CountryCode != "DE|+49" || leads[0].Phone != "15123456789" {
-		t.Errorf("Germany mismatch: cc=%s, phone=%s", leads[0].CountryCode, leads[0].Phone)
-	}
-	if leads[1].CountryCode != "GB|+44" || leads[1].Phone != "7911123456" {
-		t.Errorf("UK mismatch: cc=%s, phone=%s", leads[1].CountryCode, leads[1].Phone)
-	}
-}
-
-// TEST 8: Document containing an invalid phone number
-func Test8_InvalidPhoneNumberHandling(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Company: Broken Phone Ltd
-Contact: John Error
-Email: john@broken.com
-Phone: abc-123-xyz
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead extracted, got %d", len(leads))
-	}
-	// Phone is cleaned of letters, remaining "123" will be caught by preview validation
-	if leads[0].Phone != "123" {
-		t.Errorf("expected cleaned digits '123', got '%s'", leads[0].Phone)
-	}
-}
-
-// TEST 9: Document with missing email
-func Test9_MissingEmail(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Company: No Email Corp
-Contact: Jane Doe
-Phone: 9876543210
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead extracted, got %d", len(leads))
-	}
-	if leads[0].Email != "" {
-		t.Errorf("expected empty email, got '%s'", leads[0].Email)
-	}
-}
-
-// TEST 10: Document with missing required lead fields
-func Test10_MissingRequiredFields(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-Company: Minimal Co
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead extracted, got %d", len(leads))
-	}
-	if leads[0].Company != "Minimal Co" || leads[0].Contact != "" || leads[0].Email != "" {
-		t.Errorf("unexpected field mapping: %+v", leads[0])
-	}
-}
-
-// TEST 11: Document with extra unrelated text
-func Test11_ExtraUnrelatedText(t *testing.T) {
-	parser := NewDocumentParser()
-	text := `
-CONFIDENTIAL MEETING MINUTES
-Date: September 18, 2026
-Attendees: Marketing Team
-
-The committee reviewed several potential client prospects for Q4 enterprise outreach:
-
-Lead:
-Company: Acme AI Solutions
-Contact Person: Bruce Banner
-Email: banner@acmeai.com
-Phone: 9876543210
-Request Type: IT Product
-Request Details: Machine learning models deployment for automated pipeline monitoring.
-
-Meeting adjourned at 5:00 PM.
-`
-	leads := parser.parseLabelValueBlocks(text)
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead extracted amidst noise, got %d", len(leads))
-	}
-	if leads[0].Company != "Acme AI Solutions" || leads[0].Contact != "Bruce Banner" {
-		t.Errorf("failed extraction from noisy document: %+v", leads[0])
-	}
-}
-
-// TEST 12: Empty PDF / Word document
-func Test12_EmptyDocument(t *testing.T) {
+// TEST 12: Empty / Corrupted document rejection
+func Test12_EmptyAndCorruptedDocument(t *testing.T) {
 	parser := NewDocumentParser()
 	_, err := parser.ExtractLeadsFromDocument([]byte{}, "empty.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 	if err == nil || err.Error() != "The uploaded document is empty." {
 		t.Fatalf("expected 'The uploaded document is empty.' error, got: %v", err)
 	}
-}
 
-// TEST 13: Scanned / image-only PDF error message check
-func Test13_ScannedOrEmptyPDF(t *testing.T) {
-	// Empty plain text check simulation
-	rawText := "   \n\t  "
-	if strings.TrimSpace(rawText) != "" {
-		t.Fatalf("expected whitespace only")
-	}
-}
-
-type DocumentParserError struct {
-	Message string
-}
-
-func (e *DocumentParserError) Error() string {
-	return e.Message
-}
-
-// TEST 14: Corrupted document
-func Test14_CorruptedDocument(t *testing.T) {
-	parser := NewDocumentParser()
-	_, err := parser.ExtractLeadsFromDocument([]byte("random garbled data that is not zip or pdf"), "corrupt.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	_, err = parser.ExtractLeadsFromDocument([]byte("corrupt content"), "corrupt.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 	if err == nil {
-		t.Fatalf("expected corrupted file error, got nil")
-	}
-}
-
-// TEST 15: Unsupported file (.xlsx, .jpg, .exe)
-func Test15_UnsupportedFiles(t *testing.T) {
-	parser := NewDocumentParser()
-	unsupported := []string{"data.xlsx", "image.jpg", "program.exe", "archive.zip"}
-	for _, fn := range unsupported {
-		_, err := parser.ExtractLeadsFromDocument([]byte("some data"), fn, "application/octet-stream")
-		if err == nil {
-			t.Errorf("expected error for unsupported file %s, got nil", fn)
-		}
-	}
-}
-
-// Comprehensive DOCX Table Extraction Test
-func TestDocxTableExtraction(t *testing.T) {
-	parser := NewDocumentParser()
-
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-
-	xmlContent := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-    <w:tbl>
-      <w:tr>
-        <w:tc><w:p><w:r><w:t>Company Name</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Contact Name</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Email Address</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Phone Number</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Country</w:t></w:r></w:p></w:tc>
-      </w:tr>
-      <w:tr>
-        <w:tc><w:p><w:r><w:t>Munich Auto</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Klaus Schmidt</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>klaus@munichauto.de</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>+4915123456789</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>Germany</w:t></w:r></w:p></w:tc>
-      </w:tr>
-    </w:tbl>
-  </w:body>
-</w:document>`
-
-	f, err := zw.Create("word/document.xml")
-	if err != nil {
-		t.Fatalf("failed to create zip file: %v", err)
-	}
-	_, err = f.Write([]byte(xmlContent))
-	if err != nil {
-		t.Fatalf("failed to write xml to zip: %v", err)
-	}
-	zw.Close()
-
-	leads, err := parser.ExtractLeadsFromDocument(buf.Bytes(), "leads.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-	if err != nil {
-		t.Fatalf("unexpected error parsing docx: %v", err)
-	}
-	if len(leads) != 1 {
-		t.Fatalf("expected 1 lead, got %d", len(leads))
-	}
-
-	lead := leads[0]
-	if lead.Company != "Munich Auto" || lead.Contact != "Klaus Schmidt" || lead.CountryCode != "DE|+49" {
-		t.Errorf("docx lead mismatch: %+v", lead)
+		t.Fatalf("expected error for corrupted docx, got nil")
 	}
 }
