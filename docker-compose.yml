@@ -35,8 +35,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-postgres}
       DB_SSLMODE: ${DB_SSLMODE:-disable}
-    ports:
-      - "8080:8080"
+      ports:
+      - "127.0.0.1:8092:8080"
 
 volumes:
   postgres_data:
