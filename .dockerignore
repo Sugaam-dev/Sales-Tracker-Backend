@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.*
+*.exe
+tmp*
+server
+api_tests.http
+structure.txt
+README.md
+script/validate_*
