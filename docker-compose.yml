@@ -1,8 +1,23 @@
 services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sales_tracker_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+
+  # Local Postgres container (only needed for offline local development without Supabase)
+  # To run with local postgres: docker compose --profile local-db up -d
   postgres:
     image: postgres:16-alpine
     container_name: sales_tracker_postgres
     restart: unless-stopped
+    profiles:
+      - local-db
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -14,29 +29,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sales_tracker_backend
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      SERVER_PORT: ${SERVER_PORT:-8080}
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      DB_NAME: ${DB_NAME:-postgres}
-      DB_SSLMODE: ${DB_SSLMODE:-disable}
-      ports:
-      - "127.0.0.1:8092:8080"
 
 volumes:
   postgres_data:
